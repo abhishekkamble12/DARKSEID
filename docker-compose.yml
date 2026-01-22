@@ -1,0 +1,33 @@
+services:
+  # 1. Your Python Agent
+  agent:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Use the service name "postgres" as the hostname
+      - DATABASE_URL=postgresql://user:password@postgres:5432/agent_db
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+    volumes:
+      - ./app:/app  # Live code reloading (optional)
+
+  # 2. The Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: agent_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d agent_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pg_data:

@@ -1,0 +1,6 @@
+langgraph
+langchain
+langchain-google-genai
+langgraph-checkpoint-postgres
+psycopg-pool
+opik

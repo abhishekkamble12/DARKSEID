@@ -19,11 +19,20 @@ Usage:
 """
 
 import os
+import sys
 import uuid
 import tempfile
 from typing import TypedDict, Annotated, Literal, List, Optional
 from dotenv import load_dotenv
 from pathlib import Path
+
+# Fix Windows console encoding for emoji characters
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except:
+        pass
 
 # LangChain imports
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -34,6 +43,13 @@ from langchain_core.documents import Document
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+# HuggingFace imports for Learning Architect
+from langchain_huggingface import HuggingFacePipeline, ChatHuggingFace
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import torch
+import json
+import re
 
 # LangGraph imports
 from langgraph.graph import StateGraph, START, END
@@ -69,6 +85,10 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "localhost")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", "6333"))
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "documents")
 
+# HuggingFace Configuration for Learning Architect
+HF_MODEL_ID = os.getenv("HF_MODEL_ID", "Qwen/Qwen2.5-7B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")  # Optional: for gated models
+
 # Validate required keys
 if not GOOGLE_API_KEY:
     raise ValueError("GOOGLE_API_KEY not found in environment variables!")
@@ -86,6 +106,69 @@ embeddings = GoogleGenerativeAIEmbeddings(
     model="models/embedding-001",
     google_api_key=GOOGLE_API_KEY
 )
+
+# =============================================================================
+# HUGGINGFACE MODEL FOR LEARNING ARCHITECT
+# =============================================================================
+
+def get_learning_architect_llm():
+    """
+    Initialize the HuggingFace model for Learning Architect (Mindmap + Quiz generation).
+    Uses Qwen/Qwen2.5-7B-Instruct by default.
+    """
+    try:
+        # Determine device
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"🧠 Loading Learning Architect model on {device}...")
+        
+        # Load tokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            HF_MODEL_ID,
+            token=HF_TOKEN,
+            trust_remote_code=True
+        )
+        
+        # Load model with appropriate settings
+        model = AutoModelForCausalLM.from_pretrained(
+            HF_MODEL_ID,
+            token=HF_TOKEN,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            device_map="auto" if device == "cuda" else None,
+            trust_remote_code=True,
+            low_cpu_mem_usage=True
+        )
+        
+        # Create pipeline
+        text_gen_pipeline = pipeline(
+            "text-generation",
+            model=model,
+            tokenizer=tokenizer,
+            max_new_tokens=2048,
+            temperature=0.7,
+            top_p=0.9,
+            do_sample=True,
+            pad_token_id=tokenizer.eos_token_id
+        )
+        
+        # Wrap in LangChain
+        hf_llm = HuggingFacePipeline(pipeline=text_gen_pipeline)
+        print(f"✅ Learning Architect model loaded: {HF_MODEL_ID}")
+        return hf_llm
+        
+    except Exception as e:
+        print(f"⚠️ Could not load HuggingFace model: {e}")
+        print("   Falling back to Gemini for Learning Architect.")
+        return None
+
+# Lazy initialization - will be loaded when needed
+_learning_architect_llm = None
+
+def get_or_init_learning_llm():
+    """Get or initialize the Learning Architect LLM (lazy loading)."""
+    global _learning_architect_llm
+    if _learning_architect_llm is None:
+        _learning_architect_llm = get_learning_architect_llm()
+    return _learning_architect_llm
 
 # =============================================================================
 # QDRANT VECTOR STORE SETUP
@@ -325,7 +408,57 @@ RESEARCH_AGENT = "research_agent"
 EXAMINER_AGENT = "examiner_agent"
 CHAT_AGENT = "chat_agent"
 RAG_AGENT = "rag_agent"
-AGENT_LIST = [RESEARCH_AGENT, EXAMINER_AGENT, CHAT_AGENT, RAG_AGENT]
+LEARNING_ARCHITECT_AGENT = "learning_architect_agent"
+AGENT_LIST = [RESEARCH_AGENT, EXAMINER_AGENT, CHAT_AGENT, RAG_AGENT, LEARNING_ARCHITECT_AGENT]
+
+# =============================================================================
+# LEARNING ARCHITECT SYSTEM PROMPT
+# =============================================================================
+
+LEARNING_ARCHITECT_SYSTEM_PROMPT = """You are the "Darksied Learning Architect." Your goal is to transform complex context into structured educational artifacts.
+
+### RULES:
+1. ALWAYS output in TWO formats: A structured JSON for Quiz Cards and a Mermaid.js code block for a Mindmap.
+2. GROUNDING: Use ONLY the provided context from the RAG retrieval. If the context is missing, ask for a document upload.
+3. QUALITY: Quizzes must focus on conceptual "Why" and "How," not just "What."
+
+### OUTPUT STRUCTURE:
+
+[PART 1: MINDMAP]
+Generate a Mermaid.js mindmap syntax that visualizes the hierarchy of the topic.
+Format:
+```mermaid
+mindmap
+  root((Central Topic))
+    Subtopic 1
+      Detail A
+      Detail B
+    Subtopic 2
+      Detail C
+```
+
+[PART 2: QUIZ CARDS]
+Generate a JSON array of 5 quiz card objects:
+```json
+{
+  "cards": [
+    {
+      "question": "...",
+      "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+      "answer": "...",
+      "explanation": "...",
+      "tts_text": "Question: [question text]. Think carefully about the options."
+    }
+  ]
+}
+```
+
+### GUIDELINES:
+- Mindmap should capture the main concepts and their relationships
+- Quiz questions should test understanding, not just memorization
+- Include a mix of difficulty levels in the quiz
+- Explanations should help reinforce learning
+- Use clear, educational language"""
 
 
 def supervisor_node(state: SupervisorState) -> dict:
@@ -334,9 +467,10 @@ def supervisor_node(state: SupervisorState) -> dict:
     
     Routes to:
     - research_agent: For web searches, LeetCode problems, DSA explanations
-    - examiner_agent: For generating quiz/MCQ questions
+    - examiner_agent: For generating quiz/MCQ questions (without document context)
     - chat_agent: For general conversation, greetings, simple questions
     - rag_agent: For questions about uploaded documents/PDFs
+    - learning_architect_agent: For generating mindmaps and quizzes FROM uploaded documents
     """
     messages = state["messages"]
     last_message = messages[-1].content if messages else ""
@@ -351,17 +485,26 @@ Available Agents:
    current events, weather, news, technical research, anything requiring internet search.
    
 2. **examiner_agent** - Use for: generating quiz questions, MCQs, test questions, 
-   practice problems, assessments on any topic.
+   practice problems on general topics (NOT from documents).
    
 3. **chat_agent** - Use for: general conversation, greetings, simple factual questions 
    that don't need search, explanations from your knowledge, coding help, math.
 
-4. **rag_agent** - Use for: questions about uploaded documents, PDFs, files.
-   Keywords that indicate this: "document", "pdf", "file", "uploaded", "the paper", 
-   "this document", "what does the file say", "summarize the document", "in the pdf".
+4. **rag_agent** - Use for: general questions about uploaded documents, PDFs, files.
+   Keywords: "document", "pdf", "file", "uploaded", "the paper", "summarize".
    {file_context}
 
-Analyze the user's message and respond with ONLY the agent name (one of: research_agent, examiner_agent, chat_agent, rag_agent).
+5. **learning_architect_agent** - Use for: generating EDUCATIONAL content FROM documents:
+   - Mindmaps from document content
+   - Quiz cards from document content  
+   - Study materials from uploaded files
+   - Learning aids based on documents
+   Keywords: "mindmap", "mind map", "quiz from document", "study material", 
+   "learning cards", "flashcards from pdf", "visualize the document", "help me learn",
+   "create quiz from", "generate mindmap from", "study guide".
+   {file_context}
+
+Analyze the user's message and respond with ONLY the agent name (one of: research_agent, examiner_agent, chat_agent, rag_agent, learning_architect_agent).
 Do NOT include any other text, just the agent name."""),
         ("human", "{query}")
     ])
@@ -555,11 +698,171 @@ Sources: {sources}"""),
     }
 
 
+def learning_architect_agent_node(state: SupervisorState) -> dict:
+    """
+    Learning Architect Agent: Generates educational content (Mindmaps + Quiz Cards) 
+    from uploaded documents using HuggingFace Qwen model.
+    """
+    messages = state["messages"]
+    last_message = messages[-1].content if messages else ""
+    session_id = state.get("session_id", "default")
+    
+    try:
+        # Retrieve relevant documents for context
+        docs = query_documents(last_message, session_id, k=8)  # Get more context for learning
+        
+        if not docs:
+            content = """📚 **Learning Architect Ready!**
+
+I need document context to generate educational materials. Please:
+1. Upload a document first using `upload <path>`
+2. Then ask me to create a mindmap or quiz from it
+
+Example commands:
+- "Create a mindmap from the uploaded document"
+- "Generate quiz cards from the PDF"
+- "Help me learn the concepts in this document"
+"""
+            return {
+                "messages": [AIMessage(content=content)],
+                "final_response": content
+            }
+        
+        # Build rich context from retrieved documents
+        context_parts = []
+        sources = set()
+        for doc in docs:
+            context_parts.append(doc.page_content)
+            sources.add(doc.metadata.get("source_file", "Unknown"))
+        
+        context_text = "\n\n---\n\n".join(context_parts)
+        
+        # Create the educational content generation prompt
+        generation_prompt = f"""You are the Darksied Learning Architect. Transform the following document context into educational materials.
+
+### CONTEXT FROM DOCUMENTS:
+{context_text}
+
+### USER REQUEST:
+{last_message}
+
+### YOUR TASK:
+Generate BOTH a Mermaid.js mindmap AND a JSON quiz based on the context above.
+
+{LEARNING_ARCHITECT_SYSTEM_PROMPT}
+
+Now generate the educational content:"""
+
+        # Try to use HuggingFace model, fall back to Gemini if unavailable
+        learning_llm = get_or_init_learning_llm()
+        
+        if learning_llm is not None:
+            # Use HuggingFace Qwen model
+            try:
+                response = learning_llm.invoke(generation_prompt)
+                content = response if isinstance(response, str) else str(response)
+            except Exception as hf_error:
+                print(f"⚠️ HuggingFace model error: {hf_error}, falling back to Gemini")
+                content = _generate_with_gemini_fallback(context_text, last_message, sources)
+        else:
+            # Fallback to Gemini
+            content = _generate_with_gemini_fallback(context_text, last_message, sources)
+        
+        # Add source attribution
+        source_list = ", ".join(sources)
+        content = f"📚 **Learning Materials Generated from: {source_list}**\n\n{content}"
+        
+    except Exception as e:
+        content = f"""❌ Error generating learning materials: {str(e)}
+
+**Troubleshooting:**
+1. Make sure you've uploaded a document first
+2. Ensure Qdrant is running
+3. Check that the HuggingFace model is properly configured
+
+You can set `HF_TOKEN` environment variable if using gated models."""
+
+    return {
+        "messages": [AIMessage(content=content)],
+        "final_response": content
+    }
+
+
+def _generate_with_gemini_fallback(context_text: str, user_request: str, sources: set) -> str:
+    """
+    Fallback function to generate educational content using Gemini if HuggingFace is unavailable.
+    """
+    fallback_prompt = ChatPromptTemplate.from_messages([
+        ("system", LEARNING_ARCHITECT_SYSTEM_PROMPT),
+        ("human", """Using the following context from uploaded documents, generate educational materials.
+
+CONTEXT:
+{context}
+
+SOURCES: {sources}
+
+USER REQUEST: {request}
+
+Generate a comprehensive Mermaid mindmap first, then a 5-card JSON quiz.""")
+    ])
+    
+    chain = fallback_prompt | llm
+    response = chain.invoke({
+        "context": context_text,
+        "sources": ", ".join(sources),
+        "request": user_request
+    })
+    
+    content = response.content
+    if isinstance(content, list):
+        content = content[0].get("text", str(content)) if content else ""
+    
+    return content
+
+
+def parse_learning_output(raw_output: str) -> dict:
+    """
+    Parse the Learning Architect output to extract mindmap and quiz separately.
+    
+    Returns:
+        dict with 'mindmap' (str) and 'quiz' (dict) keys
+    """
+    result = {
+        "mindmap": None,
+        "quiz": None,
+        "raw": raw_output
+    }
+    
+    # Extract Mermaid mindmap
+    mermaid_pattern = r'```mermaid\s*([\s\S]*?)```'
+    mermaid_match = re.search(mermaid_pattern, raw_output)
+    if mermaid_match:
+        result["mindmap"] = mermaid_match.group(1).strip()
+    
+    # Extract JSON quiz
+    json_pattern = r'```json\s*([\s\S]*?)```'
+    json_match = re.search(json_pattern, raw_output)
+    if json_match:
+        try:
+            result["quiz"] = json.loads(json_match.group(1).strip())
+        except json.JSONDecodeError:
+            # Try to find just the cards array
+            cards_pattern = r'\{\s*"cards"\s*:\s*\[([\s\S]*?)\]\s*\}'
+            cards_match = re.search(cards_pattern, raw_output)
+            if cards_match:
+                try:
+                    result["quiz"] = json.loads(f'{{"cards": [{cards_match.group(1)}]}}')
+                except json.JSONDecodeError:
+                    pass
+    
+    return result
+
+
 # =============================================================================
 # ROUTING FUNCTION
 # =============================================================================
 
-def route_to_agent(state: SupervisorState) -> Literal["research_agent", "examiner_agent", "chat_agent", "rag_agent"]:
+def route_to_agent(state: SupervisorState) -> Literal["research_agent", "examiner_agent", "chat_agent", "rag_agent", "learning_architect_agent"]:
     """Routes to the appropriate agent based on supervisor's decision."""
     return state["next_agent"]
 
@@ -579,6 +882,7 @@ def create_supervisor_graph(checkpointer=None):
     workflow.add_node(EXAMINER_AGENT, examiner_agent_node)
     workflow.add_node(CHAT_AGENT, chat_agent_node)
     workflow.add_node(RAG_AGENT, rag_agent_node)
+    workflow.add_node(LEARNING_ARCHITECT_AGENT, learning_architect_agent_node)
     
     # Add edges
     workflow.add_edge(START, "supervisor")
@@ -592,6 +896,7 @@ def create_supervisor_graph(checkpointer=None):
             EXAMINER_AGENT: EXAMINER_AGENT,
             CHAT_AGENT: CHAT_AGENT,
             RAG_AGENT: RAG_AGENT,
+            LEARNING_ARCHITECT_AGENT: LEARNING_ARCHITECT_AGENT,
         }
     )
     
@@ -600,6 +905,7 @@ def create_supervisor_graph(checkpointer=None):
     workflow.add_edge(EXAMINER_AGENT, END)
     workflow.add_edge(CHAT_AGENT, END)
     workflow.add_edge(RAG_AGENT, END)
+    workflow.add_edge(LEARNING_ARCHITECT_AGENT, END)
     
     # Compile with checkpointer if provided
     if checkpointer:
@@ -769,8 +1075,71 @@ class SupervisorChatbot:
 3. Or: "Summarize chapter 2 from the PDF"
 4. Or: "What does the paper say about neural networks?"
 
+🧠 Learning Architect (Mindmap + Quiz) Examples:
+─────────────────────────────────────────────────────
+1. First upload: upload /path/to/document.pdf
+2. Then ask:
+   • "Create a mindmap from this document"
+   • "Generate quiz cards from the uploaded PDF"
+   • "Help me learn the concepts in this file"
+   • "Make study materials from the document"
+   • "Visualize the key topics as a mindmap"
+
+The Learning Architect generates:
+  📊 Mermaid.js Mindmaps - Visual concept hierarchies
+  📝 Quiz Cards (JSON) - 5 MCQ questions with explanations
+
 Supported file types: PDF, TXT, MD, CSV, DOC, DOCX
 """)
+    
+    def generate_learning_materials(self, topic_query: str = None) -> dict:
+        """
+        Programmatically generate learning materials from uploaded documents.
+        
+        Args:
+            topic_query: Optional specific topic to focus on
+            
+        Returns:
+            dict with 'mindmap', 'quiz', and 'raw' keys
+        """
+        if topic_query is None:
+            topic_query = "Generate a comprehensive mindmap and quiz from the uploaded documents"
+        
+        # Force routing to learning architect
+        response = self.chat(f"Create mindmap and quiz cards: {topic_query}")
+        
+        # Parse the output
+        return parse_learning_output(response)
+    
+    def get_quiz_only(self, topic: str = None) -> dict:
+        """
+        Generate only quiz cards from uploaded documents.
+        
+        Args:
+            topic: Optional specific topic to focus on
+            
+        Returns:
+            dict with quiz cards or None if parsing failed
+        """
+        query = f"Generate quiz cards about {topic}" if topic else "Generate quiz cards from the document"
+        response = self.chat(query)
+        result = parse_learning_output(response)
+        return result.get("quiz")
+    
+    def get_mindmap_only(self, topic: str = None) -> str:
+        """
+        Generate only a mindmap from uploaded documents.
+        
+        Args:
+            topic: Optional specific topic to focus on
+            
+        Returns:
+            Mermaid.js mindmap string or None if parsing failed
+        """
+        query = f"Create a mindmap about {topic}" if topic else "Create a mindmap from the document"
+        response = self.chat(query)
+        result = parse_learning_output(response)
+        return result.get("mindmap")
 
 
 # =============================================================================
@@ -810,6 +1179,15 @@ if __name__ == "__main__":
             response = chatbot.chat(query)
             print(f"💬 Response: {response[:500]}..." if len(response) > 500 else f"💬 Response: {response}")
             print("\n")
+        
+        print("\n" + "="*60)
+        print("🧠 LEARNING ARCHITECT READY")
+        print("="*60)
+        print("Upload a document and try commands like:")
+        print("  • 'Create a mindmap from the document'")
+        print("  • 'Generate quiz cards from the PDF'")
+        print("  • 'Help me learn the concepts in this file'")
+        print("="*60 + "\n")
     
     # Start interactive mode
     print("\n" + "="*60)

@@ -29,10 +29,11 @@ from langchain_core.documents import Document
 
 # Qdrant imports
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 
-# Document processing
-from unstructured.partition.pdf import partition_pdf
+# Document processing - using PyPDF2 (no poppler required)
+from PyPDF2 import PdfReader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # Load environment variables
 load_dotenv()
@@ -93,7 +94,7 @@ def initialize_collection():
             collection_name=QDRANT_COLLECTION,
             vectors_config=VectorParams(size=768, distance=Distance.COSINE)
         )
-        print(f"Created Qdrant collection: {QDRANT_COLLECTION}")
+        print(f"[OK] Created Qdrant collection: {QDRANT_COLLECTION}")
     
     return client
 
@@ -188,9 +189,9 @@ async def startup():
     """Initialize connections on startup."""
     try:
         initialize_collection()
-        print(f"✅ Connected to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
+        print(f"[OK] Connected to Qdrant at {QDRANT_HOST}:{QDRANT_PORT}")
     except Exception as e:
-        print(f"⚠️ Qdrant connection failed: {e}")
+        print(f"[WARN] Qdrant connection failed: {e}")
 
 
 # =============================================================================
@@ -222,9 +223,10 @@ async def index_pdf(
     session_id: str = "default"
 ):
     """
-    Index a PDF by extracting text, tables, and images.
+    Index a PDF by extracting text using PyPDF2.
     Stores embeddings in Qdrant for later retrieval.
     """
+    temp_path = None
     try:
         # Save temp file
         temp_path = f"temp_{uuid.uuid4()}_{file.filename}"
@@ -232,98 +234,62 @@ async def index_pdf(
             content = await file.read()
             f.write(content)
 
-        # Partition PDF
-        chunks = partition_pdf(
-            filename=temp_path,
-            infer_table_structure=True,
-            strategy="hi_res",
-            extract_image_block_to_payload=True,
-            chunking_strategy="by_title",
-        )
+        # Extract text using PyPDF2
+        reader = PdfReader(temp_path)
+        full_text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                full_text += page_text + "\n\n"
 
-        # Categorize elements
-        tables, texts, images_b64 = [], [], []
-        for chunk in chunks:
-            chunk_type = str(type(chunk))
-            if "Table" in chunk_type:
-                tables.append(chunk)
-            elif "CompositeElement" in chunk_type:
-                texts.append(chunk)
-                # Extract images from composite elements
-                if hasattr(chunk, 'metadata') and hasattr(chunk.metadata, 'orig_elements'):
-                    for el in chunk.metadata.orig_elements:
-                        if "Image" in str(type(el)) and hasattr(el.metadata, 'image_base64'):
-                            images_b64.append(el.metadata.image_base64)
+        if not full_text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract text from PDF. The PDF might be scanned/image-based.")
+
+        # Split text into chunks
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=1000,
+            chunk_overlap=200,
+            length_function=len,
+        )
+        chunks = text_splitter.split_text(full_text)
 
         vs = get_vector_store()
-        text_count, table_count, image_count = 0, 0, 0
+        text_count = 0
 
         # Index text chunks
-        if texts:
-            summaries = generate_summaries(texts)
+        if chunks:
             docs = [
                 Document(
-                    page_content=summary,
+                    page_content=chunk,
                     metadata={
                         "session_id": session_id,
                         "source_file": file.filename,
                         "type": "text",
-                        "original_content": texts[i].text if hasattr(texts[i], 'text') else str(texts[i])
+                        "chunk_index": i
                     }
                 )
-                for i, summary in enumerate(summaries)
+                for i, chunk in enumerate(chunks)
             ]
             vs.add_documents(docs)
             text_count = len(docs)
 
-        # Index tables
-        if tables:
-            t_summaries = generate_summaries(tables, is_table=True)
-            docs = [
-                Document(
-                    page_content=summary,
-                    metadata={
-                        "session_id": session_id,
-                        "source_file": file.filename,
-                        "type": "table",
-                    }
-                )
-                for summary in t_summaries
-            ]
-            vs.add_documents(docs)
-            table_count = len(docs)
-
-        # Index images
-        if images_b64:
-            i_summaries = generate_image_summaries(images_b64)
-            docs = [
-                Document(
-                    page_content=summary,
-                    metadata={
-                        "session_id": session_id,
-                        "source_file": file.filename,
-                        "type": "image",
-                    }
-                )
-                for summary in i_summaries
-            ]
-            vs.add_documents(docs)
-            image_count = len(docs)
-
         # Cleanup
-        os.remove(temp_path)
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
         
         return IndexResponse(
             status="success",
-            message=f"Indexed {file.filename} successfully",
+            message=f"Indexed {file.filename} successfully ({text_count} chunks)",
             text_chunks=text_count,
-            table_chunks=table_count,
-            image_chunks=image_count
+            table_chunks=0,
+            image_chunks=0
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         # Cleanup on error
-        if os.path.exists(temp_path):
+        if temp_path and os.path.exists(temp_path):
             os.remove(temp_path)
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -337,11 +303,19 @@ async def query_rag(request: QueryRequest):
     try:
         vs = get_vector_store()
         
-        # Search with session filter
+        # Search with session filter using proper Qdrant filter format
+        qdrant_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="metadata.session_id",
+                    match=MatchValue(value=request.session_id)
+                )
+            ]
+        )
         docs = vs.similarity_search(
             request.question,
             k=request.top_k,
-            filter={"session_id": request.session_id}
+            filter=qdrant_filter
         )
 
         if not docs:
@@ -424,4 +398,4 @@ async def clear_session(session_id: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

@@ -23,11 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install requirements
-COPY mcp\ tools/requirements-rag.txt requirements.txt
+COPY ["mcp tools/requirements-rag.txt", "requirements.txt"]
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # Copy the RAG service code
-COPY mcp\ tools/Rag.py .
+COPY ["mcp tools/Rag.py", "."]
 
 # Create uploads directory
 RUN mkdir -p /app/uploads

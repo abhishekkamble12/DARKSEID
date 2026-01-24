@@ -1,0 +1,58 @@
+# =============================================================================
+# DARKSIED VOICE AVATAR MODE DEPENDENCIES
+# =============================================================================
+# Install with: pip install -r requirements-voice.txt
+#
+# These are ADDITIONAL dependencies for the Voice Avatar feature.
+# You must also have the base requirements installed.
+
+# =============================================================================
+# LiveKit Agents Framework
+# =============================================================================
+# Core agent framework for real-time voice applications
+livekit-agents>=0.8.0
+
+# =============================================================================
+# LiveKit Plugins - Google (STT, LLM, TTS)
+# =============================================================================
+# Google Gemini integration for Speech-to-Text, LLM, and Text-to-Speech
+livekit-plugins-google>=0.8.0
+
+# =============================================================================
+# LiveKit Plugins - Beyond Presence (Avatar)
+# =============================================================================
+# Optional: Visual avatar integration
+# Comment out if running in voice-only mode
+livekit-plugins-bey>=0.8.0
+
+# =============================================================================
+# LiveKit Plugins - Silero (Voice Activity Detection)
+# =============================================================================
+# High-quality VAD for better conversation flow
+livekit-plugins-silero>=0.8.0
+
+# =============================================================================
+# Supporting Libraries
+# =============================================================================
+# Environment variable management
+python-dotenv>=1.0.0
+
+# Async HTTP client (for RAG API calls)
+aiohttp>=3.9.0
+
+# =============================================================================
+# Optional: Alternative Voice Providers
+# =============================================================================
+# Uncomment these if you want to use alternative providers
+
+# OpenAI Realtime API (alternative to Google)
+# livekit-plugins-openai>=0.8.0
+
+# ElevenLabs (premium TTS)
+# livekit-plugins-elevenlabs>=0.8.0
+
+# Deepgram (alternative STT)
+# livekit-plugins-deepgram>=0.8.0
+
+# Cartesia (alternative TTS)
+# livekit-plugins-cartesia>=0.8.0

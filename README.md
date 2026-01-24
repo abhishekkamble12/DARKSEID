@@ -6,9 +6,11 @@
   <img src="https://img.shields.io/badge/Qdrant-Vector%20DB-red.svg" alt="Qdrant">
   <img src="https://img.shields.io/badge/PostgreSQL-15-blue.svg" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED.svg" alt="Docker">
+  <img src="https://img.shields.io/badge/🤗%20HuggingFace-Qwen2.5-yellow.svg" alt="HuggingFace">
+  <img src="https://img.shields.io/badge/🎙️%20LiveKit-Voice%20AI-ff6b6b.svg" alt="LiveKit">
 </p>
 
-A production-ready, LangGraph-based **multi-agent system** featuring an intelligent Supervisor Agent that routes user queries to specialized agents. Includes **RAG (Retrieval Augmented Generation)** for document Q&A, persistent conversation memory with PostgreSQL, and vector storage with Qdrant.
+A production-ready, LangGraph-based **multi-agent system** featuring an intelligent Supervisor Agent that routes user queries to specialized agents. Includes **RAG (Retrieval Augmented Generation)** for document Q&A, **Learning Architect** for generating mindmaps & quizzes from documents, **Voice Avatar Mode** with real-time Socratic tutoring, persistent conversation memory with PostgreSQL, and vector storage with Qdrant.
 
 ---
 
@@ -24,6 +26,8 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
 - [Usage](#-usage)
   - [Interactive Mode](#interactive-mode)
   - [Document Upload (RAG)](#document-upload-rag)
+  - [Learning Architect (Mindmaps & Quizzes)](#learning-architect-mindmaps--quizzes)
+  - [Voice Avatar Mode](#-voice-avatar-mode-livekit-integration)
   - [API Mode](#api-mode)
 - [Agent Details](#-agent-details)
 - [Project Structure](#-project-structure)
@@ -57,6 +61,20 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
 - Customizable difficulty levels
 - Perfect for learning and assessment
 
+### 🧠 Learning Architect (NEW!)
+- **Mindmap Generation** - Visual Mermaid.js diagrams from document content
+- **Quiz Cards** - Structured JSON quiz cards with explanations
+- **Powered by HuggingFace** - Uses Qwen/Qwen2.5-7B-Instruct model
+- **TTS-Ready** - Quiz cards include text-to-speech formatted text
+- **Smart Fallback** - Automatically falls back to Gemini if HF unavailable
+
+### 🎙️ Voice Avatar Mode (NEW!)
+- **Real-time Voice Interaction** - Talk to your AI tutor using WebRTC via LiveKit
+- **Socratic Teaching Method** - The avatar asks probing questions instead of lecturing
+- **All-Google Stack** - Google Gemini 1.5 Flash for STT, LLM, and TTS
+- **Visual Avatar** - Optional Beyond Presence integration for visual representation
+- **RAG-Connected** - Voice queries are grounded in your uploaded documents
+
 ### 💬 General Chat
 - Natural conversation capabilities
 - Coding help and explanations
@@ -76,6 +94,7 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
 
 ## 🏗️ Architecture
 
+### Text Mode (Supervisor Multi-Agent)
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                              USER INTERFACE                                  │
@@ -93,23 +112,29 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
 │   └─────────────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────┬───────────────────────────────────────────┘
                                   │
-        ┌─────────────┬───────────┴───────────┬─────────────┐
-        │             │                       │             │
-        ▼             ▼                       ▼             ▼
-┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────┐
-│   RESEARCH    │ │   EXAMINER    │ │     CHAT      │ │      RAG      │
-│    AGENT      │ │    AGENT      │ │    AGENT      │ │    AGENT      │
-│               │ │               │ │               │ │               │
-│ • Web Search  │ │ • MCQ Gen     │ │ • General Q&A │ │ • Doc Search  │
-│ • LeetCode    │ │ • Quiz Create │ │ • Coding Help │ │ • PDF Q&A     │
-│ • DSA Explain │ │ • Assessment  │ │ • Math/Logic  │ │ • Summarize   │
-└───────┬───────┘ └───────────────┘ └───────────────┘ └───────┬───────┘
-        │                                                     │
-        ▼                                                     ▼
-┌───────────────┐                                     ┌───────────────┐
-│    TAVILY     │                                     │    QDRANT     │
-│   Search API  │                                     │ Vector Store  │
-└───────────────┘                                     └───────────────┘
+    ┌───────────┬─────────────────┼─────────────────┬───────────┐
+    │           │                 │                 │           │
+    ▼           ▼                 ▼                 ▼           ▼
+┌─────────┐ ┌─────────┐ ┌─────────────────┐ ┌─────────┐ ┌─────────────────┐
+│RESEARCH │ │EXAMINER │ │      CHAT       │ │   RAG   │ │    LEARNING     │
+│ AGENT   │ │ AGENT   │ │     AGENT       │ │  AGENT  │ │   ARCHITECT     │
+│         │ │         │ │                 │ │         │ │                 │
+│• Search │ │• MCQ Gen│ │• General Q&A    │ │• Doc Q&A│ │• Mindmap Gen    │
+│• DSA    │ │• Quiz   │ │• Coding Help    │ │• PDF    │ │• Quiz Cards     │
+│• News   │ │• Test   │ │• Math/Logic     │ │• Summary│ │• Study Material │
+└────┬────┘ └─────────┘ └─────────────────┘ └────┬────┘ └───────┬─────────┘
+     │                                           │              │
+     ▼                                           │              ▼
+┌─────────┐                                      │      ┌───────────────┐
+│ TAVILY  │                                      │      │  HUGGINGFACE  │
+│Search   │                                      │      │ Qwen2.5-7B    │
+└─────────┘                                      │      └───────────────┘
+                                                 │
+                                                 ▼
+                                         ┌───────────────┐
+                                         │    QDRANT     │
+                                         │ Vector Store  │
+                                         └───────────────┘
 
                     ┌─────────────────────────────────┐
                     │         POSTGRESQL              │
@@ -121,26 +146,89 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
                     └─────────────────────────────────┘
 ```
 
+### Voice Mode (Socratic Avatar)
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              USER (Voice)                                    │
+│                         🎤 Microphone → Speaker 🔊                          │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │ WebRTC
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           LIVEKIT SERVER                                     │
+│                      (Real-time Audio Transport)                            │
+└─────────────────────────────────────┬───────────────────────────────────────┘
+                                      │
+                                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         VOICE AVATAR AGENT                                   │
+│                                                                             │
+│   ┌──────────┐    ┌──────────────────┐    ┌──────────┐                     │
+│   │   STT    │ →  │  GEMINI 1.5 FLASH │ →  │   TTS    │                     │
+│   │  Google  │    │  (Socratic Brain) │    │  Google  │                     │
+│   └──────────┘    └────────┬─────────┘    └──────────┘                     │
+│                            │                                                │
+│                            ▼                                                │
+│                   ┌─────────────────┐                                       │
+│                   │  STUDY TOOLS    │ ←── RAG Bridge to Qdrant             │
+│                   └────────┬────────┘                                       │
+│                            │                                                │
+│   Optional:       ┌────────▼────────┐                                       │
+│                   │ BEYOND PRESENCE │ → Visual Avatar Stream                │
+│                   └─────────────────┘                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
 ### Data Flow
 
+#### Text Mode Flow
 ```
-1. User Input
+1. User Input (Text)
        │
        ▼
 2. Supervisor Analysis ──────────────────────────────┐
        │                                              │
        ▼                                              ▼
 3. Agent Selection                            PostgreSQL
-   ├── research_agent ───► Tavily API         (Save State)
-   ├── examiner_agent ───► LLM Generation
-   ├── chat_agent ───────► LLM Response
-   └── rag_agent ────────► Qdrant Search
+   ├── research_agent ──────────► Tavily API  (Save State)
+   ├── examiner_agent ──────────► LLM Generation
+   ├── chat_agent ──────────────► LLM Response
+   ├── rag_agent ───────────────► Qdrant Search
+   └── learning_architect_agent ─► Qdrant + HuggingFace
+       │                            │
+       │                            ├── Mindmap (Mermaid.js)
+       │                            └── Quiz Cards (JSON)
        │
        ▼
 4. Response Generation
        │
        ▼
-5. User Output
+5. User Output (Text)
+```
+
+#### Voice Mode Flow
+```
+1. User Speech (Microphone)
+       │
+       ▼
+2. LiveKit WebRTC Transport
+       │
+       ▼
+3. Google STT (Speech-to-Text)
+       │
+       ▼
+4. Gemini 1.5 Flash ─────────────► StudyTools
+       │                              │
+       │                              ▼
+       │                          Qdrant RAG
+       │                              │
+       ◄─────────────────────────────┘
+       │
+       ▼
+5. Google TTS (Text-to-Speech)
+       │
+       ▼
+6. User Hears Response (Speaker)
 ```
 
 ---
@@ -285,6 +373,13 @@ python app/project.py
 | `QDRANT_HOST` | ⚠️ For RAG | `localhost` | Qdrant server hostname |
 | `QDRANT_PORT` | ⚠️ For RAG | `6333` | Qdrant server port |
 | `QDRANT_COLLECTION` | No | `documents` | Qdrant collection name |
+| `HF_MODEL_ID` | No | `Qwen/Qwen2.5-7B-Instruct` | HuggingFace model for Learning Architect |
+| `HF_TOKEN` | No | - | HuggingFace token (for gated models) |
+| `LIVEKIT_URL` | ⚠️ For Voice | - | LiveKit server WebSocket URL |
+| `LIVEKIT_API_KEY` | ⚠️ For Voice | - | LiveKit API key |
+| `LIVEKIT_API_SECRET` | ⚠️ For Voice | - | LiveKit API secret |
+| `BEY_API_KEY` | No | - | Beyond Presence API key (for avatar) |
+| `BEY_AVATAR_ID` | No | - | Beyond Presence avatar ID |
 | `OPENAI_API_KEY` | No | - | OpenAI API (for RAG service) |
 | `GROQ_API_KEY` | No | - | Groq API (for RAG service) |
 
@@ -317,8 +412,10 @@ You'll see:
 ```
 ✅ Qdrant vector store connected!
 ✅ PostgreSQL checkpointer connected!
+🧠 Loading Learning Architect model on cuda...
+✅ Learning Architect model loaded: Qwen/Qwen2.5-7B-Instruct
 ✅ Supervisor Multi-Agent System initialized!
-   Available agents: research_agent, examiner_agent, chat_agent, rag_agent
+   Available agents: research_agent, examiner_agent, chat_agent, rag_agent, learning_architect_agent
    Session ID: abc123-def456-...
 
 ============================================================
@@ -402,6 +499,278 @@ You: Summarize chapter 3
 | `.doc` | Word 97-2003 | Legacy Word format |
 | `.docx` | Word Document | Modern Word format |
 
+### Learning Architect (Mindmaps & Quizzes)
+
+The Learning Architect agent transforms your uploaded documents into educational materials using HuggingFace's Qwen2.5-7B-Instruct model.
+
+#### Generate Learning Materials
+```
+You: upload C:\Documents\machine_learning_basics.pdf
+📄 Indexed document: machine_learning_basics.pdf (58 chunks)
+✅ Document uploaded and indexed: 58 chunks
+
+You: Create a mindmap from this document
+🎯 Supervisor routed to: learning_architect_agent
+📚 Learning Materials Generated from: machine_learning_basics.pdf
+
+[PART 1: MINDMAP]
+```mermaid
+mindmap
+  root((Machine Learning))
+    Supervised Learning
+      Classification
+        Decision Trees
+        Neural Networks
+      Regression
+        Linear Regression
+        Polynomial Regression
+    Unsupervised Learning
+      Clustering
+        K-Means
+        Hierarchical
+      Dimensionality Reduction
+        PCA
+        t-SNE
+    Reinforcement Learning
+      Q-Learning
+      Policy Gradient
+```
+
+[PART 2: QUIZ CARDS]
+```json
+{
+  "cards": [
+    {
+      "question": "Why is feature scaling important in machine learning?",
+      "options": ["A) It makes the code run faster", "B) It ensures features contribute equally to the model", "C) It reduces the dataset size", "D) It is only needed for neural networks"],
+      "answer": "B",
+      "explanation": "Feature scaling ensures that all features contribute proportionally to the model's learning process, preventing features with larger ranges from dominating.",
+      "tts_text": "Question: Why is feature scaling important in machine learning? Think carefully about the options."
+    }
+  ]
+}
+```
+```
+
+#### Example Queries for Learning Architect
+```
+• "Create a mindmap from the uploaded document"
+• "Generate quiz cards from the PDF"
+• "Help me learn the concepts in this file"
+• "Make study materials from the document"
+• "Visualize the key topics as a mindmap"
+• "Create flashcards from chapter 3"
+```
+
+#### Programmatic Usage
+
+```python
+from project import SupervisorChatbot
+
+# Initialize
+chatbot = SupervisorChatbot()
+
+# Upload document
+chatbot.upload_document("path/to/document.pdf")
+
+# Get both mindmap and quiz
+materials = chatbot.generate_learning_materials("Neural Networks concepts")
+print(materials["mindmap"])  # Mermaid.js syntax
+print(materials["quiz"])     # JSON quiz cards
+
+# Get individual components
+mindmap = chatbot.get_mindmap_only("Deep Learning")
+quiz = chatbot.get_quiz_only("Backpropagation")
+```
+
+#### Output Structure
+
+**Mindmap Output (Mermaid.js)**
+- Can be rendered with any Mermaid.js compatible viewer
+- Hierarchical visualization of concepts
+- Suitable for documentation and presentations
+
+**Quiz Cards Output (JSON)**
+```json
+{
+  "cards": [
+    {
+      "question": "Question text here",
+      "options": ["A) Option 1", "B) Option 2", "C) Option 3", "D) Option 4"],
+      "answer": "Correct answer letter",
+      "explanation": "Why this is the correct answer",
+      "tts_text": "Text-to-speech friendly version"
+    }
+  ]
+}
+```
+
+---
+
+## 🎙️ Voice Avatar Mode (LiveKit Integration)
+
+Darksied isn't just a text bot—it features a **Real-Time Socratic Avatar** that can quiz you verbally using natural conversation.
+
+### Voice Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         USER (Browser/App)                       │
+│                     🎤 Microphone → Speaker 🔊                   │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │ WebRTC
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                       LIVEKIT SERVER                             │
+│                   (Real-time Audio Transport)                    │
+└─────────────────────────────────┬───────────────────────────────┘
+                                  │
+                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    DARKSIED VOICE PIPELINE                       │
+│                                                                  │
+│  ┌─────────┐    ┌─────────────┐    ┌─────────┐                  │
+│  │  STT    │ →  │   GEMINI    │ →  │   TTS   │                  │
+│  │ Google  │    │ 1.5 Flash   │    │ Google  │                  │
+│  └─────────┘    └──────┬──────┘    └─────────┘                  │
+│                        │                                         │
+│                        ▼                                         │
+│               ┌────────────────┐                                 │
+│               │  STUDY TOOLS   │ ← Connected to Qdrant RAG      │
+│               │  (RAG Bridge)  │                                 │
+│               └────────────────┘                                 │
+│                                                                  │
+│  Optional: ┌─────────────────┐                                   │
+│            │ BEYOND PRESENCE │ → Visual Avatar Stream            │
+│            │     Avatar      │                                   │
+│            └─────────────────┘                                   │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Components
+
+| Component | Technology | Purpose |
+|-----------|------------|---------|
+| **Transport** | LiveKit (WebRTC) | Real-time audio/video streaming |
+| **Brain** | Google Gemini 1.5 Flash | Conversation understanding & generation |
+| **Voice Input** | Google STT | Speech-to-Text transcription |
+| **Voice Output** | Google TTS | Natural text-to-speech |
+| **Knowledge** | Darksied RAG Engine | Grounded in uploaded documents |
+| **Visuals** | Beyond Presence (Optional) | Animated avatar representation |
+
+### Setup Voice Avatar Mode
+
+#### Step 1: Install Voice Dependencies
+
+```bash
+cd Darksied
+pip install -r requirements-voice.txt
+```
+
+#### Step 2: Configure Environment Variables
+
+Add these to your `.env` file:
+
+```bash
+# LiveKit Configuration (get from https://cloud.livekit.io/)
+LIVEKIT_URL=wss://your-project.livekit.cloud
+LIVEKIT_API_KEY=your_livekit_api_key
+LIVEKIT_API_SECRET=your_livekit_api_secret
+
+# Beyond Presence Avatar (optional, get from https://beyondpresence.ai/)
+BEY_API_KEY=your_beyond_presence_api_key
+BEY_AVATAR_ID=your_avatar_id
+```
+
+#### Step 3: Run the Voice Avatar Agent
+
+```bash
+# Development mode (with hot reload)
+python app/avatar_agent.py dev
+
+# Production mode
+python app/avatar_agent.py start
+```
+
+#### Step 4: Connect via LiveKit Playground
+
+1. Go to the [LiveKit Agents Playground](https://agents-playground.livekit.io/)
+2. Connect using your LiveKit credentials
+3. Start talking to your Socratic Tutor!
+
+### Socratic Teaching Method
+
+The Voice Avatar uses the **Socratic Method** to teach:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    SOCRATIC DIALOGUE FLOW                     │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Student: "What is backpropagation?"                         │
+│                                                              │
+│  ❌ BAD (Lecture Mode):                                      │
+│  "Backpropagation is an algorithm used to train neural       │
+│   networks by computing gradients through the chain rule..." │
+│                                                              │
+│  ✅ GOOD (Socratic Mode):                                    │
+│  "Before I explain, tell me: what do you think a neural      │
+│   network needs to learn from its mistakes?"                 │
+│                                                              │
+│  Student: "Um... it needs to know how wrong it was?"         │
+│                                                              │
+│  Avatar: "Exactly! And how might it figure out which         │
+│   weights caused the most error? Think about working         │
+│   backwards through the network..."                          │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Voice Avatar Features
+
+| Feature | Description |
+|---------|-------------|
+| 🎯 **Probing Questions** | Asks "why" and "how" instead of lecturing |
+| 🔍 **RAG-Grounded** | Queries are verified against uploaded documents |
+| 🔄 **Graceful Correction** | Never says "wrong"—redirects with hints |
+| ⏸️ **Interruptions** | Can be interrupted mid-speech naturally |
+| 📚 **Quiz Generation** | Can generate verbal quizzes on the fly |
+| 🎭 **Visual Avatar** | Optional animated avatar via Beyond Presence |
+
+### Example Voice Session
+
+```
+🤖 Avatar: "Hello student! I am your Socratic Tutor from Darksied. 
+           What topic from your uploaded materials would you like to explore?"
+
+👤 Student: "I want to understand machine learning."
+
+🤖 Avatar: *consults RAG* "I see you've uploaded a document about ML fundamentals.
+           Let me start with a question: Why do you think machines need to 'learn' 
+           rather than just being programmed with rules?"
+
+👤 Student: "Because there are too many rules to write manually?"
+
+🤖 Avatar: "That's one reason! But think deeper—what kind of problems have 
+           patterns that are hard for humans to define explicitly?"
+
+👤 Student: "Like... recognizing faces? We can do it but can't explain how?"
+
+🤖 Avatar: "Excellent insight! You've identified a key motivation for ML.
+           Now, given that intuition, how do you think a neural network 
+           might learn to recognize patterns?"
+```
+
+### Voice Mode vs Text Mode
+
+| Aspect | Text Mode | Voice Mode |
+|--------|-----------|------------|
+| **Interaction** | Type messages | Speak naturally |
+| **Response** | Read text | Hear spoken response |
+| **Avatar** | None | Optional visual avatar |
+| **Best For** | Detailed research, code review | Quick quizzes, verbal practice |
+| **Latency** | Instant | ~500ms (real-time) |
+
 ### API Mode
 
 The RAG service can also run as a REST API:
@@ -429,14 +798,25 @@ uvicorn Rag:app --host 0.0.0.0 --port 8001
 3. Selects the best agent for the task
 4. Routes the query
 
-**Routing Logic:**
+**Routing Logic (Text Mode):**
 ```
 User Input → LLM Analysis → Agent Selection
    │
    ├── Contains "search", "find", "weather", "news" → Research Agent
-   ├── Contains "quiz", "MCQ", "questions", "test" → Examiner Agent
-   ├── Contains "document", "PDF", "file", "uploaded" → RAG Agent
+   ├── Contains "quiz", "MCQ", "questions", "test" (general) → Examiner Agent
+   ├── Contains "document", "PDF", "file", "summarize" → RAG Agent
+   ├── Contains "mindmap", "quiz from document", "study material",
+   │   "learning cards", "flashcards from pdf", "help me learn" → Learning Architect
    └── Everything else → Chat Agent
+```
+
+**Voice Mode (Separate Pipeline):**
+```
+User Speech → LiveKit → Voice Avatar Agent (Socratic Tutor)
+                              │
+                              ├── Always uses Socratic questioning method
+                              ├── Connects to RAG via StudyTools
+                              └── Responds via TTS (voice output)
 ```
 
 ### 2. Research Agent
@@ -525,6 +905,130 @@ User Query
 └─────────────────┘
 ```
 
+### 6. Learning Architect Agent 🧠
+
+**Purpose:** Generate educational materials (mindmaps & quizzes) from documents
+
+**Model:** HuggingFace Qwen/Qwen2.5-7B-Instruct (with Gemini fallback)
+
+**Workflow:**
+```
+User Request (e.g., "Create mindmap from document")
+      │
+      ▼
+┌─────────────────┐
+│   RAG Retrieval │ (Get relevant chunks from Qdrant)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│ Context Building│ (Combine chunks into rich context)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  HuggingFace    │ (Qwen2.5-7B-Instruct)
+│  OR Gemini      │ (Fallback)
+└────────┬────────┘
+         │
+         ├────────────────┬────────────────┐
+         ▼                ▼                ▼
+   ┌──────────┐    ┌───────────┐    ┌───────────┐
+   │ Mindmap  │    │Quiz Cards │    │ Formatted │
+   │(Mermaid) │    │  (JSON)   │    │  Output   │
+   └──────────┘    └───────────┘    └───────────┘
+```
+
+**Capabilities:**
+- 📊 **Mindmap Generation** - Mermaid.js syntax for visual concept hierarchies
+- 📝 **Quiz Card Creation** - 5 MCQ questions with explanations
+- 🔊 **TTS-Ready Output** - Text-to-speech formatted content
+- 🎯 **Context-Grounded** - Uses ONLY document content, no hallucination
+- ♻️ **Smart Fallback** - Automatically uses Gemini if HuggingFace unavailable
+
+**Example Queries:**
+- "Create a mindmap from this document"
+- "Generate quiz cards about chapter 2"
+- "Help me learn the concepts in this PDF"
+- "Make study materials from the uploaded file"
+
+**System Prompt Philosophy:**
+The Learning Architect follows the "Darksied Learning Architect" system prompt which emphasizes:
+1. **Dual Output** - Always generates BOTH mindmap AND quiz
+2. **Context Grounding** - Uses ONLY retrieved document content
+3. **Quality Focus** - Quiz questions test "Why" and "How", not just "What"
+4. **Structured Format** - Consistent Mermaid.js and JSON output
+
+### 7. Voice Avatar Agent 🎙️
+
+**Purpose:** Real-time voice-based Socratic tutoring
+
+**Model:** Google Gemini 1.5 Flash (STT, LLM, TTS)
+
+**Transport:** LiveKit (WebRTC)
+
+**Workflow:**
+```
+User Speech (Microphone)
+      │
+      ▼
+┌─────────────────┐
+│   LiveKit       │ (WebRTC Transport)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Google STT     │ (Speech-to-Text)
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Gemini 1.5     │ (Understanding + Response)
+│     Flash       │
+└────────┬────────┘
+         │
+         ├─── Uses StudyTools ──► Qdrant RAG
+         │
+         ▼
+┌─────────────────┐
+│   Google TTS    │ (Text-to-Speech)
+└────────┬────────┘
+         │
+         ▼
+   User Hears Response
+```
+
+**Study Tools (RAG Bridge):**
+- `consult_knowledge_base(topic)` - Query uploaded documents
+- `verify_student_answer(topic, answer)` - Check student understanding
+- `generate_quiz_question(topic, difficulty)` - Create verbal quizzes
+
+**Capabilities:**
+- 🎤 **Real-time Voice** - Natural conversational interaction
+- 🧠 **Socratic Method** - Asks questions instead of lecturing
+- 📚 **RAG-Grounded** - Responses verified against documents
+- 🔄 **Graceful Correction** - Redirects without saying "wrong"
+- ⏸️ **Interruptible** - Can be stopped mid-response
+- 🎭 **Visual Avatar** - Optional Beyond Presence integration
+
+**Example Interaction:**
+```
+Student: "Explain backpropagation to me"
+
+Avatar (Socratic): "Before I explain, let me ask you: 
+                   What do you think a neural network needs 
+                   to learn from its mistakes?"
+```
+
+**Running the Voice Avatar:**
+```bash
+# Development mode
+python app/avatar_agent.py dev
+
+# Connect via LiveKit Playground
+# https://agents-playground.livekit.io/
+```
+
 ---
 
 ## 📁 Project Structure
@@ -533,7 +1037,8 @@ User Query
 Darksied/
 │
 ├── app/                          # Main application code
-│   ├── project.py               # Main entry point
+│   ├── project.py               # Main entry point (Text agents)
+│   ├── avatar_agent.py          # Voice Avatar agent (LiveKit)
 │   └── requirements.txt         # Python dependencies
 │
 ├── mcp tools/                    # MCP (Model Context Protocol) tools
@@ -547,6 +1052,8 @@ Darksied/
 ├── Dockerfile.rag               # RAG service container
 ├── init-db.sql                  # PostgreSQL initialization
 │
+├── requirements-voice.txt       # Voice Avatar dependencies
+├── env.example                  # Environment variables template
 ├── Chatbot.ipynb                # Jupyter notebook for testing
 ├── README.md                    # This file
 └── .env                         # Environment variables (create this)
@@ -670,14 +1177,19 @@ docker-compose exec agent python project.py
 
 ### Resource Requirements
 
-| Service | CPU | RAM | Disk |
-|---------|-----|-----|------|
-| agent | 1 core | 2GB | 1GB |
-| postgres | 0.5 core | 512MB | 1GB |
-| qdrant | 1 core | 1GB | Varies |
-| rag-api | 1 core | 2GB | 1GB |
+| Service | CPU | RAM | Disk | GPU (Optional) |
+|---------|-----|-----|------|----------------|
+| agent | 1 core | 2GB | 1GB | - |
+| agent (with Learning Architect) | 2 cores | 8GB | 15GB | CUDA GPU recommended |
+| postgres | 0.5 core | 512MB | 1GB | - |
+| qdrant | 1 core | 1GB | Varies | - |
+| rag-api | 1 core | 2GB | 1GB | - |
 
-**Total Recommended:** 4 cores, 8GB RAM
+**Without Learning Architect HF Model:** 4 cores, 8GB RAM
+**With Learning Architect HF Model (CPU):** 4 cores, 16GB RAM
+**With Learning Architect HF Model (GPU):** 4 cores, 8GB RAM + CUDA GPU (8GB+ VRAM)
+
+> **Note:** The Learning Architect uses HuggingFace Qwen2.5-7B-Instruct. If insufficient resources, it automatically falls back to Gemini API.
 
 ---
 
@@ -745,6 +1257,57 @@ services:
           memory: 4G
 ```
 
+#### 6. "HuggingFace model failed to load" / Learning Architect issues
+```bash
+# Check if you have enough RAM (16GB+ for CPU inference)
+free -h  # Linux/Mac
+Get-Process | Sort-Object WorkingSet -Descending  # Windows
+
+# For GPU acceleration, verify CUDA is available
+python -c "import torch; print(torch.cuda.is_available())"
+
+# If using a gated model, set your HuggingFace token
+export HF_TOKEN=your_huggingface_token
+
+# The system will automatically fall back to Gemini if HF fails
+# Check logs for: "⚠️ Could not load HuggingFace model... Falling back to Gemini"
+```
+
+#### 7. "Learning Architect returns empty mindmap/quiz"
+- Ensure you've uploaded a document first
+- Check that Qdrant has indexed the document:
+```bash
+curl http://localhost:6333/collections/documents
+```
+- Try a more specific query: "Create a mindmap about [specific topic] from the document"
+
+#### 8. Voice Avatar: "Cannot connect to LiveKit"
+```bash
+# Verify LiveKit credentials in .env
+echo $LIVEKIT_URL
+echo $LIVEKIT_API_KEY
+
+# Test connection (Python)
+python -c "from livekit import api; print('LiveKit SDK OK')"
+
+# Check if running in development mode
+python app/avatar_agent.py dev --help
+```
+
+#### 9. Voice Avatar: "Google STT/TTS not working"
+```bash
+# Verify Google API key has Speech-to-Text and Text-to-Speech APIs enabled
+# Go to: https://console.cloud.google.com/apis/library
+
+# Test Google credentials
+python -c "from livekit.plugins import google; print('Google plugin OK')"
+```
+
+#### 10. Voice Avatar: "No audio input/output"
+- Check browser permissions for microphone
+- Ensure you're using HTTPS or localhost
+- Try the LiveKit Agents Playground: https://agents-playground.livekit.io/
+
 ### Debug Mode
 
 Enable verbose logging:
@@ -809,19 +1372,44 @@ We welcome contributions! Here's how you can help:
    ```python
    def my_new_agent_node(state: SupervisorState) -> dict:
        """My new agent description."""
-       # Implementation
-       return {"messages": [...], "final_response": "..."}
+       messages = state["messages"]
+       last_message = messages[-1].content if messages else ""
+       
+       # Your agent logic here
+       content = "Agent response"
+       
+       return {
+           "messages": [AIMessage(content=content)],
+           "final_response": content
+       }
    ```
 
 2. Add to agent list:
    ```python
    MY_NEW_AGENT = "my_new_agent"
-   AGENT_LIST = [..., MY_NEW_AGENT]
+   AGENT_LIST = [RESEARCH_AGENT, EXAMINER_AGENT, CHAT_AGENT, RAG_AGENT, 
+                 LEARNING_ARCHITECT_AGENT, MY_NEW_AGENT]
    ```
 
-3. Update supervisor routing prompt
+3. Update supervisor routing prompt in `supervisor_node()`:
+   ```python
+   # Add description for your agent
+   6. **my_new_agent** - Use for: [describe when to route here]
+   ```
 
-4. Add node and edges to graph
+4. Update the routing Literal type:
+   ```python
+   def route_to_agent(state) -> Literal[..., "my_new_agent"]:
+   ```
+
+5. Add node and edges to graph in `create_supervisor_graph()`:
+   ```python
+   workflow.add_node(MY_NEW_AGENT, my_new_agent_node)
+   # In conditional edges dict:
+   MY_NEW_AGENT: MY_NEW_AGENT,
+   # Add end edge:
+   workflow.add_edge(MY_NEW_AGENT, END)
+   ```
 
 ---
 
@@ -838,6 +1426,10 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Qdrant](https://qdrant.tech/) - Vector database
 - [Google Gemini](https://ai.google.dev/) - LLM provider
 - [Tavily](https://tavily.com/) - Search API
+- [HuggingFace](https://huggingface.co/) - Open source ML models
+- [Qwen](https://huggingface.co/Qwen) - Qwen2.5-7B-Instruct model
+- [LiveKit](https://livekit.io/) - Real-time voice/video infrastructure
+- [Beyond Presence](https://beyondpresence.ai/) - AI avatar technology
 
 ---
 

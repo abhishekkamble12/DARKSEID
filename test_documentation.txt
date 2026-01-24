@@ -1,0 +1,70 @@
+# PROJECT TESTING DOCUMENTATION
+
+This document provides a complete guide to testing the Darksied Multi-Agent System.
+
+---
+
+### PART 1: STARTING THE SYSTEM
+1. Open your terminal in `D:\AISENSE_PROJ\Darksied`.
+2. Start the core services:
+   ```powershell
+   docker-compose up -d
+   ```
+3. Start the RAG API service (Required for Postman):
+   ```powershell
+   docker-compose --profile rag up -d
+   ```
+
+---
+
+### PART 2: TESTING THE INTERACTIVE AGENT (PORT 8000)
+Run this command to talk to the agents in your terminal:
+```powershell
+docker-compose exec agent python project.py
+```
+**Try these commands inside the agent:**
+- `Hi, what can you do?` (Chat Agent)
+- `Find me popular LeetCode problems for Arrays` (Research Agent)
+- `Generate 5 MCQ questions about Python` (Examiner Agent)
+- `upload test_document.txt` (RAG Indexing)
+- `What is the main topic of the document?` (RAG Query)
+
+---
+
+### PART 3: TESTING THE RAG API WITH POSTMAN (PORT 8001)
+
+#### 1. Check Health
+- **Method:** `GET`
+- **URL:** `http://localhost:8001/health`
+- **Expected Result:** `{"status": "healthy", ...}`
+
+#### 2. Index a PDF (Upload)
+- **Method:** `POST`
+- **URL:** `http://localhost:8001/index_pdf`
+- **Body:** Select `form-data`
+  - Key: `file` (Change type to **File**)
+  - Value: [Select your PDF file]
+  - Key: `session_id` (Type: Text) | Value: `test_user_1`
+- **Expected Result:** `{"status": "success", "message": "Indexed successfully"}`
+
+#### 3. Ask a Question (Query)
+- **Method:** `POST`
+- **URL:** `http://localhost:8001/query_rag`
+- **Body:** Select `raw` -> `JSON`
+- **Content:**
+  ```json
+  {
+    "question": "What is the summary of this document?",
+    "session_id": "test_user_1",
+    "top_k": 5
+  }
+  ```
+- **Expected Result:** The AI's answer based on your PDF content.
+
+---
+
+### PART 4: CLEANUP
+To stop all services and clear containers:
+```powershell
+docker-compose --profile rag down
+```

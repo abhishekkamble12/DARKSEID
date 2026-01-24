@@ -1,0 +1,37 @@
+# =============================================================================
+# Dockerfile for RAG API Service (Optional microservice)
+# =============================================================================
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Install system dependencies for PDF processing
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq-dev \
+    gcc \
+    g++ \
+    poppler-utils \
+    tesseract-ocr \
+    libmagic1 \
+    ffmpeg \
+    libsm6 \
+    libxext6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy and install requirements
+COPY mcp\ tools/requirements-rag.txt requirements.txt
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Copy the RAG service code
+COPY mcp\ tools/Rag.py .
+
+# Create uploads directory
+RUN mkdir -p /app/uploads
+
+EXPOSE 8000
+
+CMD ["python", "-m", "uvicorn", "Rag:app", "--host", "0.0.0.0", "--port", "8000"]

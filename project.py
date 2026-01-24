@@ -40,6 +40,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langgraph.checkpoint.postgres import PostgresSaver
+import psycopg
 
 # Qdrant imports
 from qdrant_client import QdrantClient
@@ -126,9 +127,13 @@ def get_vector_store() -> QdrantVectorStore:
 # POSTGRESQL CHECKPOINTER SETUP
 # =============================================================================
 
-def get_checkpointer() -> PostgresSaver:
+def get_checkpointer():
     """Get PostgreSQL checkpointer for conversation memory."""
-    return PostgresSaver.from_conn_string(DATABASE_URL)
+    # Create a sync connection with autocommit for setup
+    conn = psycopg.connect(DATABASE_URL, autocommit=True)
+    checkpointer = PostgresSaver(conn)
+    checkpointer.setup()
+    return checkpointer
 
 
 # =============================================================================
@@ -630,7 +635,6 @@ class SupervisorChatbot:
         if use_checkpointer:
             try:
                 self.checkpointer = get_checkpointer()
-                self.checkpointer.setup()
                 print("✅ PostgreSQL checkpointer connected!")
             except Exception as e:
                 print(f"⚠️ PostgreSQL not available: {e}")

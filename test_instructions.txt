@@ -1,0 +1,42 @@
+# HOW TO TEST YOUR PROJECT
+
+Follow these steps to test the Darksied Multi-Agent System:
+
+### 1. Start the services
+Make sure you are in the D:\AISENSE_PROJ\Darksied directory and run:
+```powershell
+docker-compose up -d
+```
+(I see this is already running in your terminal!)
+
+### 2. Enter the Agent Container
+To interact with the agent directly, run:
+```powershell
+docker-compose exec agent python project.py
+```
+This will start the interactive session. You can type your questions there.
+
+### 3. Test RAG (Document Search)
+The system has a RAG agent. To test it:
+a. Copy the `test_document.txt` I created for you into the `uploads` folder inside the project.
+b. In the agent prompt, you can ask questions about the document, such as:
+   - "What agents are in this project?"
+   - "Tell me about the Examiner Agent."
+
+### 4. Test Research & DSA
+The agent can also search the web. Try asking:
+- "Find me popular LeetCode problems for Dynamic Programming."
+- "Explain the Merge Sort algorithm."
+
+### 5. Check the Database (Optional)
+Your conversation memory is stored in PostgreSQL. You can check it with:
+```powershell
+docker-compose exec postgres psql -U user -d agent_db -c "SELECT * FROM checkpoints;"
+```
+
+### 6. View the Dashboard (Coming soon?)
+If you use the `rag-api` profile, you can access the API at http://localhost:8001.
+To start with RAG API:
+```powershell
+docker-compose --profile rag up -d
+```

@@ -1,0 +1,48 @@
+# Simple Guide: Testing with Postman
+
+Yes! You should absolutely use Postman to test the **RAG API** part of your project. It's much easier to see the results there.
+
+### 1. Prerequisite: Start the RAG API
+The RAG API runs on a different "profile". Open your terminal and run:
+```powershell
+docker-compose --profile rag up -d
+```
+This starts the service on port **8001**.
+
+---
+
+### 2. How to use Postman (Step-by-Step)
+
+#### A. Check if it's working (Health Check)
+1. Open Postman and click **New** -> **HTTP Request**.
+2. Select **GET** and enter: `http://localhost:8001/health`
+3. Click **Send**. You should see `"status": "healthy"`.
+
+#### B. Upload a PDF (Index Document)
+1. Create a new request.
+2. Select **POST** and enter: `http://localhost:8001/index_pdf`
+3. Go to the **Body** tab, select **form-data**.
+4. In the **Key** column, type `file`. Change the dropdown from "Text" to **File**.
+5. In the **Value** column, click "Select Files" and pick a PDF.
+6. Click **Send**. It will analyze the PDF and store it in the database.
+
+#### C. Ask a Question (Query RAG)
+1. Create a new request.
+2. Select **POST** and enter: `http://localhost:8001/query_rag`
+3. Go to the **Body** tab, select **raw**, and choose **JSON** in the dropdown.
+4. Paste this simple code:
+```json
+{
+  "question": "What is the main topic of the document?",
+  "session_id": "default",
+  "top_k": 5
+}
+```
+5. Click **Send**. The AI will read your document and give you the answer!
+
+---
+
+### Summary Tips:
+- **Port 8001** is for the API (Postman).
+- **Port 8000** is where the interactive terminal agent runs.
+- If you get an error, make sure `docker-compose --profile rag up -d` is finished starting.

@@ -1,0 +1,25 @@
+# Darksied Agent Project - Sample Test Document
+
+This is a sample document to test the Retrieval-Augmented Generation (RAG) capabilities of the Darksied Multi-Agent System.
+
+## Project Overview
+The Darksied project is a sophisticated multi-agent system built using LangGraph and LangChain. It features several specialized agents:
+- **Supervisor Agent:** The brains of the operation that routes queries.
+- **Research Agent:** Uses Tavily for web searches and DSA concept explanations.
+- **Examiner Agent:** Generates quizzes and assessments for users.
+- **RAG Agent:** Searches through uploaded documents like this one.
+- **Chat Agent:** Handles general greetings and conversation.
+
+## Tech Stack
+The project uses the following technologies:
+- **Language:** Python 3.11
+- **Vector DB:** Qdrant (for efficient similarity search)
+- **Database:** PostgreSQL (for conversation memory)
+- **Containerization:** Docker & Docker Compose
+- **LLM:** Google Gemini (via LangChain Google GenAI)
+
+## How to Test
+To test the RAG functionality, you can ask questions like:
+- "What agents are part of the Darksied system?"
+- "Which vector database does this project use?"
+- "What is the role of the Examiner Agent?"

@@ -8,6 +8,7 @@
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED.svg" alt="Docker">
   <img src="https://img.shields.io/badge/🤗%20HuggingFace-Qwen2.5-yellow.svg" alt="HuggingFace">
   <img src="https://img.shields.io/badge/🎙️%20LiveKit-Voice%20AI-ff6b6b.svg" alt="LiveKit">
+  <img src="https://img.shields.io/badge/📊%20Opik-Tracing%20%26%20Eval-orange.svg" alt="Opik">
 </p>
 
 A production-ready, LangGraph-based **multi-agent system** featuring an intelligent Supervisor Agent that routes user queries to specialized agents. Includes **RAG (Retrieval Augmented Generation)** for document Q&A, **Learning Architect** for generating mindmaps & quizzes from documents, **Voice Avatar Mode** with real-time Socratic tutoring, persistent conversation memory with PostgreSQL, and vector storage with Qdrant.
@@ -29,6 +30,7 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
   - [Learning Architect (Mindmaps & Quizzes)](#learning-architect-mindmaps--quizzes)
   - [Voice Avatar Mode](#-voice-avatar-mode-livekit-integration)
   - [API Mode](#api-mode)
+- [Opik Tracing & RAG Evaluation](#-opik-tracing--rag-evaluation)
 - [Agent Details](#-agent-details)
 - [Project Structure](#-project-structure)
 - [API Reference](#-api-reference)
@@ -85,10 +87,17 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
 - Resume conversations across sessions
 - Thread-based chat management
 
+### 📊 Opik Tracing & RAG Evaluation (NEW!)
+- **LangGraph Journey Tracing** - See every agent step in Opik dashboard
+- **RAG Hallucination Metrics** - Automatic accuracy scoring for document Q&A
+- **Production Observability** - Monitor agent performance in real-time
+- **Hackathon-Ready** - One-line integration with `OpikTracer`
+
 ### 🐳 Production Ready
 - Fully containerized with Docker Compose
 - Scalable microservices architecture
 - Health checks and monitoring
+- LLM observability with Opik
 
 ---
 
@@ -382,6 +391,9 @@ python app/project.py
 | `BEY_AVATAR_ID` | No | - | Beyond Presence avatar ID |
 | `OPENAI_API_KEY` | No | - | OpenAI API (for RAG service) |
 | `GROQ_API_KEY` | No | - | Groq API (for RAG service) |
+| `OPIK_API_KEY` | No | - | Opik API key (for tracing & eval) |
+| `OPIK_WORKSPACE` | No | - | Opik workspace name |
+| `OPIK_PROJECT_NAME` | No | `darksied-hackathon` | Opik project name |
 
 ### Model Configuration
 
@@ -782,6 +794,146 @@ docker-compose --profile rag up -d
 # Or locally
 cd "mcp tools"
 uvicorn Rag:app --host 0.0.0.0 --port 8001
+```
+
+---
+
+## 📊 Opik Tracing & RAG Evaluation
+
+Darksied integrates **Opik (by Comet)** for production-ready LLM observability and RAG accuracy evaluation.
+
+### What is Opik?
+
+Opik is an LLM observability platform that lets you:
+- **Trace** every step of your LangGraph agent execution
+- **Evaluate** RAG responses for hallucination
+- **Monitor** performance metrics in a dashboard
+- **Debug** agent routing and tool calls
+
+### Setup Opik
+
+#### Step 1: Install Opik
+
+```bash
+pip install opik
+```
+
+#### Step 2: Configure Environment Variables
+
+Add to your `.env` file:
+
+```bash
+# Opik (Comet) - LangGraph Tracing & RAG Evaluation
+OPIK_API_KEY=your_opik_api_key_here
+OPIK_WORKSPACE=your_workspace_name
+OPIK_PROJECT_NAME=darksied-hackathon
+```
+
+Get your API key from [Comet Opik](https://www.comet.com/opik).
+
+#### Step 3: Run Your Agent
+
+Opik tracing is automatically enabled when you start the chatbot:
+
+```bash
+python project.py
+```
+
+You'll see:
+```
+✅ Opik tracer initialized for LangGraph tracing!
+```
+
+### Viewing Traces
+
+1. Go to [Opik Dashboard](https://www.comet.com/opik)
+2. Select your workspace and project
+3. See the full agent journey:
+   - Supervisor routing decisions
+   - Tool calls and results
+   - RAG retrieval chunks
+   - Final response generation
+
+### RAG Hallucination Evaluation
+
+Darksied automatically evaluates RAG responses for hallucination:
+
+```
+You: What does the document say about neural networks?
+🎯 Supervisor routed to: rag_agent
+🧾 Opik Hallucination Score: 0.15
+📊 RAG Quality - Hallucination Score: 0.15
+🤖 Assistant: Based on the uploaded document...
+```
+
+**Score Interpretation:**
+| Score | Meaning |
+|-------|---------|
+| 0.0 - 0.2 | ✅ Low hallucination (factual) |
+| 0.2 - 0.5 | ⚠️ Moderate hallucination |
+| 0.5 - 1.0 | ❌ High hallucination (review needed) |
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      OPIK INTEGRATION                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  1. OpikTracer attached to LangGraph callbacks                   │
+│     ┌──────────────────────────────────────────────┐            │
+│     │  config = {"callbacks": [opik_tracer]}       │            │
+│     │  graph.invoke(state, config=config)          │            │
+│     └──────────────────────────────────────────────┘            │
+│                         │                                        │
+│                         ▼                                        │
+│  2. Every agent step is traced:                                  │
+│     • Supervisor → "routed to rag_agent"                        │
+│     • RAG Agent → "retrieved 5 chunks"                          │
+│     • LLM Call → "generated response"                           │
+│                         │                                        │
+│                         ▼                                        │
+│  3. RAG Evaluation (Hallucination Metric):                       │
+│     ┌──────────────────────────────────────────────┐            │
+│     │  @track                                       │            │
+│     │  def evaluate_rag(query, context, response):  │            │
+│     │      metric = Hallucination()                 │            │
+│     │      score = metric.score(...)                │            │
+│     └──────────────────────────────────────────────┘            │
+│                         │                                        │
+│                         ▼                                        │
+│  4. Results visible in Opik Dashboard                            │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Programmatic Usage
+
+```python
+from project import SupervisorChatbot, evaluate_rag
+
+# Initialize chatbot (Opik tracing auto-enabled)
+chatbot = SupervisorChatbot()
+
+# Upload document and ask questions
+chatbot.upload_document("research.pdf")
+response = chatbot.chat("Summarize the main findings")
+
+# Manual RAG evaluation
+query = "What is the conclusion?"
+context = "The study found that..."
+response = "The conclusion states..."
+
+score = evaluate_rag(query, context, response)
+print(f"Hallucination Score: {score}")
+```
+
+### Disabling Opik
+
+If you don't want Opik tracing, simply don't set the environment variables. The system gracefully falls back:
+
+```
+⚠️ Opik not installed: No module named 'opik'. Run `pip install opik` to enable tracing.
 ```
 
 ---
@@ -1430,6 +1582,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Qwen](https://huggingface.co/Qwen) - Qwen2.5-7B-Instruct model
 - [LiveKit](https://livekit.io/) - Real-time voice/video infrastructure
 - [Beyond Presence](https://beyondpresence.ai/) - AI avatar technology
+- [Opik (Comet)](https://www.comet.com/opik) - LLM tracing & evaluation
 
 ---
 

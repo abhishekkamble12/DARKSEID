@@ -44,10 +44,7 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langchain_qdrant import QdrantVectorStore
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-# HuggingFace imports for Learning Architect
-from langchain_huggingface import HuggingFacePipeline, ChatHuggingFace
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import torch
+# torch and transformers imported lazily inside get_learning_architect_llm
 import json
 import re
 
@@ -60,7 +57,7 @@ import psycopg
 
 # Qdrant imports
 from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, VectorParams
+from qdrant_client.models import Distance, VectorParams, Filter, FieldCondition, MatchValue
 
 # Document loaders
 from langchain_community.document_loaders import (
@@ -73,6 +70,33 @@ from langchain_community.document_loaders import (
 
 # Load environment variables
 load_dotenv()
+
+# =============================================================================
+# OPIK (COMET) TRACING & EVALUATION
+# =============================================================================
+# Load Opik-related environment variables from .env
+OPIK_API_KEY = os.getenv("OPIK_API_KEY")
+OPIK_WORKSPACE = os.getenv("OPIK_WORKSPACE")
+OPIK_PROJECT_NAME = os.getenv("OPIK_PROJECT_NAME")
+
+# Initialize Opik tracer for LangGraph/LangChain tracing
+opik_tracer = None
+Hallucination = None
+track = lambda fn: fn  # Default passthrough decorator
+
+try:
+    from opik.integrations.langchain import OpikTracer
+    from opik.evaluation.metrics import Hallucination
+    from opik import track
+
+    # Initialize the tracer with hackathon tags
+    # opik_tracer = OpikTracer(tags=["darksied-hackathon"])
+    opik_tracer = None
+    print("✅ Opik tracer initialized for LangGraph tracing!")
+except ImportError as e:
+    print(f"⚠️ Opik not installed: {e}. Run `pip install opik` to enable tracing.")
+except Exception as e:
+    print(f"⚠️ Opik initialization failed: {e}. Tracing disabled.")
 
 # =============================================================================
 # CONFIGURATION
@@ -117,6 +141,11 @@ def get_learning_architect_llm():
     Uses Qwen/Qwen2.5-7B-Instruct by default.
     """
     try:
+        # Lazy imports for Learning Architect
+        import torch
+        from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+        from langchain_huggingface import HuggingFacePipeline
+        
         # Determine device
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"🧠 Loading Learning Architect model on {device}...")
@@ -311,11 +340,20 @@ def query_documents(question: str, session_id: str = "default", k: int = 5) -> L
     """
     vector_store = get_vector_store()
     
-    # Search with session filter
+    # Search with session filter using proper Qdrant filter format
+    qdrant_filter = Filter(
+        must=[
+            FieldCondition(
+                key="metadata.session_id",
+                match=MatchValue(value=session_id)
+            )
+        ]
+    )
+    
     results = vector_store.similarity_search(
         question,
         k=k,
-        filter={"session_id": session_id}
+        filter=qdrant_filter
     )
     
     return results
@@ -641,6 +679,47 @@ Be conversational, helpful, and concise.""")
     }
 
 
+# =============================================================================
+# RAG EVALUATION HELPER (OPIK HALLUCINATION METRIC)
+# =============================================================================
+
+def evaluate_rag(query: str, context: str, response: str):
+    """
+    Evaluate RAG response for hallucination using Opik's Hallucination metric.
+    Decorated with @track for Opik tracing visibility.
+    
+    Args:
+        query: The user's original question
+        context: The retrieved document context
+        response: The generated RAG response
+        
+    Returns:
+        Hallucination score (float) or None if evaluation unavailable
+    """
+    if Hallucination is None:
+        print("⚠️ Opik Hallucination metric not available.")
+        return None
+    
+    try:
+        metric = Hallucination()
+        # Opik Hallucination metric expects: input, context, output
+        score_result = metric.score(
+            input=query,
+            context=[context],  # Context should be a list
+            output=response
+        )
+        hallucination_score = score_result.value if hasattr(score_result, 'value') else score_result
+        print(f"🧾 Opik Hallucination Score: {hallucination_score}")
+        return hallucination_score
+    except Exception as e:
+        print(f"⚠️ Could not compute hallucination metric: {e}")
+        return None
+
+# Apply @track decorator if available
+if track is not None and track != (lambda fn: fn):
+    evaluate_rag = track(evaluate_rag)
+
+
 def rag_agent_node(state: SupervisorState) -> dict:
     """
     RAG Agent: Handles questions about uploaded documents using retrieval-augmented generation.
@@ -688,6 +767,15 @@ Sources: {sources}"""),
             content = response.content
             if isinstance(content, list):
                 content = content[0].get("text", str(content)) if content else ""
+            
+            # === OPIK RAG EVALUATION ===
+            # Evaluate hallucination score for the RAG response (non-blocking)
+            try:
+                rag_score = evaluate_rag(last_message, context, content)
+                if rag_score is not None:
+                    print(f"📊 RAG Quality - Hallucination Score: {rag_score}")
+            except Exception as eval_err:
+                print(f"⚠️ RAG evaluation skipped: {eval_err}")
                 
     except Exception as e:
         content = f"Error querying documents: {str(e)}. Please make sure documents are uploaded and Qdrant is running."
@@ -986,7 +1074,12 @@ class SupervisorChatbot:
         if uploaded_file_path:
             self.upload_document(uploaded_file_path)
         
+        # Build config with thread_id for checkpointing
         config = {"configurable": {"thread_id": self.session_id}}
+        
+        # === CRITICAL: Attach Opik tracer for full LangGraph journey tracing ===
+        if opik_tracer is not None:
+            config["callbacks"] = config.get("callbacks", []) + [opik_tracer]
         
         result = self.graph.invoke(
             {

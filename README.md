@@ -15,6 +15,46 @@ A production-ready, LangGraph-based **multi-agent system** featuring an intellig
 
 ---
 
+## 🚀 Quick Start (5 Minutes)
+
+```bash
+# 1. Clone and navigate
+cd Darksied
+
+# 2. Create .env file with your API keys
+cp env.example .env
+# Edit .env and add: GOOGLE_API_KEY=your_key
+
+# 3. Start infrastructure (Qdrant + PostgreSQL)
+docker-compose up -d qdrant postgres
+
+# 4. Install Python dependencies
+pip install -r app/requirements.txt
+
+# 5. Start the API server
+python api.py
+# Server runs on http://127.0.0.1:8010
+
+# 6. Open the web interface
+# Open front/index.html in your browser
+# OR run the Next.js frontend:
+cd frontend && npm install && npm run dev
+```
+
+**That's it!** Open `front/index.html` in your browser and start chatting.
+
+### Service Ports
+
+| Service | Port | Command |
+|---------|------|---------|
+| **API Server** | 8010 | `python api.py` |
+| **RAG Service** (optional) | 8001 | `cd "mcp tools" && uvicorn Rag:app --port 8001` |
+| **Qdrant** | 6333 | `docker-compose up -d qdrant` |
+| **PostgreSQL** | 5432 | `docker-compose up -d postgres` |
+| **Next.js Frontend** | 3000 | `cd frontend && npm run dev` |
+
+---
+
 ## 📋 Table of Contents
 
 - [Features](#-features)
@@ -798,6 +838,72 @@ uvicorn Rag:app --host 0.0.0.0 --port 8001
 
 ---
 
+## 🖥️ Web Interfaces
+
+Darksied includes **two web interfaces** - choose the one that fits your needs:
+
+### Option 1: FUI Terminal Interface (`front/`)
+
+A standalone HTML file with a futuristic terminal aesthetic. No build required!
+
+```bash
+# Just open in browser
+open front/index.html
+# Or use a simple server
+python -m http.server 3000 --directory front
+```
+
+**Features:**
+- 🖥️ Cyberpunk terminal aesthetic
+- 📝 Text chat with multi-agent routing
+- 🎤 Voice mode with browser speech API fallback
+- 🗺️ Interactive mindmap generation
+- 📊 Real-time agent activity logs
+- 📁 Document upload for RAG
+
+**Screenshot:**
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ DARKSIED // SYSTEM_V2.0                                         │
+├─────────────┬───────────────────────────────┬───────────────────┤
+│ LAB_DASH    │ TEXT_DIAGNOSIS | VOICE_AVATAR │ NEURAL_STREAM     │
+│ NEURAL_DATA │ [Chat Interface]              │ [Activity Logs]   │
+│             │                               │                   │
+│ UPLOAD_DOC  │ TYPE_COMMAND_OR_QUERY...      │ AGENT_DIAGNOSTICS │
+└─────────────┴───────────────────────────────┴───────────────────┘
+```
+
+### Option 2: Next.js React App (`frontend/`)
+
+A full-featured React application with modern UI components.
+
+```bash
+cd frontend
+npm install
+npm run dev
+# Opens on http://localhost:3000
+```
+
+**Features:**
+- ⚛️ Modern React with TypeScript
+- 🎨 Tailwind CSS + shadcn/ui components
+- 📊 Zustand state management
+- 🗺️ Advanced mindmap rendering
+- 📝 Quiz card components
+- 🔄 Real-time health monitoring
+
+### Comparison
+
+| Feature | `front/` (FUI) | `frontend/` (Next.js) |
+|---------|----------------|----------------------|
+| Setup | Zero build | `npm install` required |
+| Style | Terminal/Cyberpunk | Modern/Clean |
+| Size | ~50KB | ~5MB (with node_modules) |
+| Voice | Browser Speech API | Browser Speech API |
+| Best For | Quick demos, hackathons | Production apps |
+
+---
+
 ## 📊 Opik Tracing & RAG Evaluation
 
 Darksied integrates **Opik (by Comet)** for production-ready LLM observability and RAG accuracy evaluation.
@@ -1188,34 +1294,151 @@ python app/avatar_agent.py dev
 ```
 Darksied/
 │
-├── app/                          # Main application code
-│   ├── project.py               # Main entry point (Text agents)
-│   ├── avatar_agent.py          # Voice Avatar agent (LiveKit)
-│   └── requirements.txt         # Python dependencies
+├── api.py                       # 🚀 FastAPI Backend Server (port 8010)
+├── project.py                   # 🧠 Core Multi-Agent System + Opik Integration
 │
-├── mcp tools/                    # MCP (Model Context Protocol) tools
-│   ├── Rag.py                   # RAG API service
-│   └── requirements-rag.txt     # RAG service dependencies
+├── app/                         # Application modules
+│   ├── project.py              # Alternative entry point
+│   ├── avatar_agent.py         # Voice Avatar agent (LiveKit)
+│   ├── requirements.txt        # Python dependencies
+│   └── main.py                 # Minimal test runner
 │
-├── uploads/                      # Document upload directory
+├── front/                       # 🖥️ FUI Terminal-Style Web Interface
+│   ├── index.html              # Main HTML (single-page app)
+│   ├── css/style.css           # Custom styles
+│   └── js/
+│       ├── app.js              # Main application logic
+│       ├── api.js              # API client
+│       ├── chat.js             # Chat interface
+│       └── voice.js            # Voice/LiveKit handling
 │
-├── docker-compose.yml           # Docker orchestration
-├── Dockerfile                   # Main app container
-├── Dockerfile.rag               # RAG service container
-├── init-db.sql                  # PostgreSQL initialization
+├── frontend/                    # 🎨 Next.js React Interface (alternative)
+│   ├── src/
+│   │   ├── app/               # Next.js app router pages
+│   │   ├── components/        # React components (Chat, Voice, Mindmap)
+│   │   ├── lib/               # API utilities
+│   │   └── store/             # Zustand state management
+│   ├── package.json           # Node.js dependencies
+│   └── README.md              # Frontend docs
 │
-├── requirements-voice.txt       # Voice Avatar dependencies
-├── env.example                  # Environment variables template
-├── Chatbot.ipynb                # Jupyter notebook for testing
-├── README.md                    # This file
-└── .env                         # Environment variables (create this)
+├── mcp tools/                   # MCP RAG Microservice
+│   ├── Rag.py                  # RAG API service (port 8001)
+│   └── requirements-rag.txt    # RAG dependencies
+│
+├── uploads/                     # Document upload directory
+│
+├── docker-compose.yml          # Docker orchestration
+├── Dockerfile                  # Main app container
+├── Dockerfile.rag              # RAG service container
+├── init-db.sql                 # PostgreSQL initialization
+│
+├── requirements-voice.txt      # Voice Avatar dependencies
+├── env.example                 # Environment variables template
+├── Chatbot.ipynb               # Jupyter notebook for testing
+├── README.md                   # This documentation
+└── .env                        # Environment variables (create this)
 ```
+
+### Key Files Explained
+
+| File | Purpose |
+|------|---------|
+| `api.py` | FastAPI backend server - handles all HTTP endpoints |
+| `project.py` | Core LangGraph multi-agent system with Opik tracing |
+| `front/index.html` | FUI-style terminal interface (standalone HTML) |
+| `frontend/` | Full Next.js React application (alternative UI) |
+| `mcp tools/Rag.py` | Optional microservice for advanced RAG |
 
 ---
 
 ## 📚 API Reference
 
-### RAG API Endpoints
+**Base URL:** `http://127.0.0.1:8010`
+
+### Main API Endpoints (api.py)
+
+#### Chat with Multi-Agent System
+```http
+POST /api/chat
+Content-Type: application/json
+
+{
+  "message": "your question here",
+  "session_id": "optional-session-id"
+}
+```
+
+**Response:**
+```json
+{
+  "response": "AI response text",
+  "session_id": "abc123",
+  "type": "text|quiz|mindmap",
+  "data": null
+}
+```
+
+#### Upload Document
+```http
+POST /api/upload
+Content-Type: multipart/form-data
+
+file: <PDF/TXT/DOC file>
+session_id: "your-session-id"
+```
+
+**Response:**
+```json
+{
+  "status": "success",
+  "filename": "document.pdf",
+  "text_chunks": 42,
+  "table_chunks": 0,
+  "image_chunks": 0,
+  "message": "Document indexed successfully"
+}
+```
+
+#### Health Check
+```http
+GET /api/health
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "timestamp": 1706180000000,
+  "services": {
+    "api": {"status": "healthy"},
+    "rag": {"status": "healthy"},
+    "qdrant": {"status": "healthy"},
+    "postgres": {"status": "healthy"},
+    "voice": {"status": "healthy", "mode": "browser"}
+  }
+}
+```
+
+#### Voice Status
+```http
+GET /api/voice/status
+```
+
+#### Voice Token (for LiveKit)
+```http
+POST /api/voice/token
+Content-Type: application/json
+
+{
+  "session_id": "optional",
+  "room_name": "optional",
+  "participant_name": "optional"
+}
+```
+
+---
+
+### MCP RAG API Endpoints (port 8001, optional)
 
 #### Health Check
 ```http
@@ -1382,7 +1605,25 @@ docker-compose logs postgres
 docker-compose exec postgres pg_isready -U user -d agent_db
 ```
 
-#### 4. "PDF processing failed"
+#### 4. "503 Service Unavailable" on File Upload
+```bash
+# This happens when:
+# 1. The MCP RAG service (port 8001) is not running
+# 2. The main API server (port 8010) is not running
+
+# Solution 1: Start the main API server
+python api.py
+# Server starts on http://127.0.0.1:8010
+
+# Solution 2: (Optional) Start the MCP RAG service
+cd "mcp tools"
+uvicorn Rag:app --host 0.0.0.0 --port 8001
+
+# Note: The API now falls back to local indexing if RAG service is unavailable
+# You should see: "[WARN] MCP RAG service unavailable. Falling back to local indexing."
+```
+
+#### 5. "PDF processing failed"
 ```bash
 # Ensure poppler is installed (in Docker, it's automatic)
 # For local development:
@@ -1395,7 +1636,7 @@ brew install poppler tesseract
 # Windows - Download from https://github.com/oschwartz10612/poppler-windows/releases
 ```
 
-#### 5. "Out of memory during PDF processing"
+#### 6. "Out of memory during PDF processing"
 - Large PDFs require significant RAM
 - Try processing smaller files
 - Increase Docker memory limit:

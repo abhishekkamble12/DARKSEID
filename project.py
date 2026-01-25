@@ -79,24 +79,10 @@ OPIK_API_KEY = os.getenv("OPIK_API_KEY")
 OPIK_WORKSPACE = os.getenv("OPIK_WORKSPACE")
 OPIK_PROJECT_NAME = os.getenv("OPIK_PROJECT_NAME")
 
-# Initialize Opik tracer for LangGraph/LangChain tracing
+# Opik initialization disabled to prevent startup hangs
 opik_tracer = None
 Hallucination = None
-track = lambda fn: fn  # Default passthrough decorator
-
-try:
-    from opik.integrations.langchain import OpikTracer
-    from opik.evaluation.metrics import Hallucination
-    from opik import track
-
-    # Initialize the tracer with hackathon tags
-    # opik_tracer = OpikTracer(tags=["darksied-hackathon"])
-    opik_tracer = None
-    print("✅ Opik tracer initialized for LangGraph tracing!")
-except ImportError as e:
-    print(f"⚠️ Opik not installed: {e}. Run `pip install opik` to enable tracing.")
-except Exception as e:
-    print(f"⚠️ Opik initialization failed: {e}. Tracing disabled.")
+track = lambda fn: fn
 
 # =============================================================================
 # CONFIGURATION

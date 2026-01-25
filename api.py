@@ -8,7 +8,7 @@ import httpx
 import time
 import logging
 from typing import Optional, Dict, Any, List
-from project import SupervisorChatbot, parse_learning_output
+# project imports moved to function scope to prevent startup hangs
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -69,6 +69,7 @@ def get_chatbot():
     global _chatbot_system
     if _chatbot_system is None:
         logger.info("🧠 Initializing Supervisor Chatbot system...")
+        from project import SupervisorChatbot
         _chatbot_system = SupervisorChatbot(use_checkpointer=True)
     return _chatbot_system
 
@@ -115,6 +116,7 @@ async def chat_endpoint(request: ChatRequest):
         )
         
         # Parse for structured content (Mindmaps/Quizzes)
+        from project import parse_learning_output
         parsed = parse_learning_output(response_text)
         
         response_type = "text"
@@ -162,21 +164,21 @@ async def upload_file(
     session_id: str = Form(...)
 ):
     """
-    Upload and index a document for RAG via MCP RAG service.
+    Upload and index a document for RAG.
+    Tries MCP RAG service first, falls back to local indexing.
     """
+    # Update session ID in chatbot
+    chatbot = get_chatbot()
+    chatbot.session_id = session_id
+    
+    print(f"[INFO] Uploading file: {file.filename}")
+    
+    # Read file content once
+    file_content = await file.read()
+    
+    # Try MCP RAG service first
     try:
-        # Update session ID in chatbot
-        chatbot = get_chatbot()
-        chatbot.session_id = session_id
-        
-        print(f"[INFO] Uploading file: {file.filename} to MCP RAG service")
-        
-        # Forward file to MCP RAG service
         async with httpx.AsyncClient(timeout=120.0) as client:
-            # Read file content
-            file_content = await file.read()
-            
-            # Send to MCP RAG service
             files = {"file": (file.filename, file_content, file.content_type)}
             params = {"session_id": session_id}
             
@@ -186,28 +188,51 @@ async def upload_file(
                 params=params
             )
             
-            if response.status_code != 200:
-                error_detail = response.json().get("detail", "Unknown error")
-                raise HTTPException(status_code=response.status_code, detail=error_detail)
-            
-            result = response.json()
-            
-        print(f"[OK] File indexed: {result}")
+            if response.status_code == 200:
+                result = response.json()
+                print(f"[OK] File indexed via MCP RAG: {result}")
+                return {
+                    "status": "success",
+                    "filename": file.filename,
+                    "text_chunks": result.get("text_chunks", 0),
+                    "table_chunks": result.get("table_chunks", 0),
+                    "image_chunks": result.get("image_chunks", 0),
+                    "message": result.get("message", "Document indexed successfully")
+                }
+    except Exception as mcp_error:
+        print(f"[WARN] MCP RAG service unavailable: {mcp_error}. Falling back to local indexing.")
+    
+    # Fallback to local indexing via project.py
+    try:
+        # Save file temporarily
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        temp_path = os.path.join(UPLOAD_DIR, f"{uuid.uuid4().hex}{file_ext}")
+        
+        with open(temp_path, "wb") as f:
+            f.write(file_content)
+        
+        print(f"[INFO] Saved temp file: {temp_path}")
+        
+        # Use chatbot's upload_document method
+        result = chatbot.upload_document(temp_path)
+        
+        print(f"[OK] File indexed locally: {result}")
         
         return {
             "status": "success",
             "filename": file.filename,
-            "text_chunks": result.get("text_chunks", 0),
-            "table_chunks": result.get("table_chunks", 0),
-            "image_chunks": result.get("image_chunks", 0),
-            "message": result.get("message", "Document indexed successfully")
+            "text_chunks": result.get("chunks_indexed", 0),
+            "table_chunks": 0,
+            "image_chunks": 0,
+            "message": f"Document indexed successfully ({result.get('chunks_indexed', 0)} chunks)"
         }
-    except httpx.RequestError as e:
-        print(f"[ERROR] MCP RAG service connection error: {e}")
-        raise HTTPException(status_code=503, detail=f"RAG service unavailable: {str(e)}")
-    except Exception as e:
-        print(f"[ERROR] Upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        
+    except Exception as local_error:
+        print(f"[ERROR] Local indexing failed: {local_error}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to index document: {str(local_error)}"
+        )
 
 class RAGQueryRequest(BaseModel):
     question: str

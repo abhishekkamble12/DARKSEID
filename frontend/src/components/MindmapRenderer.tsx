@@ -7,6 +7,68 @@ interface MindmapRendererProps {
     chart: string;
 }
 
+function sanitizeMermaidMindmap(mermaidCode: string): string {
+    /**
+     * Sanitize Mermaid mindmap code to fix parsing errors.
+     * Replaces nested parentheses in node labels with brackets.
+     */
+    if (!mermaidCode) return mermaidCode;
+    
+    const lines = mermaidCode.split('\n');
+    const sanitizedLines: string[] = [];
+    
+    for (const line of lines) {
+        const stripped = line.trim();
+        
+        // Skip empty lines and diagram declaration
+        if (!stripped || stripped === 'mindmap') {
+            sanitizedLines.push(line);
+            continue;
+        }
+        
+        // Process node lines (lines with indentation that contain node definitions)
+        if (line.startsWith(' ') || line.startsWith('\t')) {
+            if (line.includes('(')) {
+                // Replace nested parentheses with brackets
+                let result = '';
+                let parenDepth = 0;
+                
+                for (const char of line) {
+                    if (char === '(') {
+                        parenDepth++;
+                        if (parenDepth > 1) {
+                            // Nested parenthesis - replace with bracket
+                            result += '[';
+                        } else {
+                            // Structural parenthesis - keep it
+                            result += char;
+                        }
+                    } else if (char === ')') {
+                        if (parenDepth > 1) {
+                            // Closing nested parenthesis - replace with bracket
+                            result += ']';
+                            parenDepth--;
+                        } else {
+                            // Closing structural parenthesis - keep it
+                            result += char;
+                            parenDepth--;
+                        }
+                    } else {
+                        result += char;
+                    }
+                }
+                
+                sanitizedLines.push(result);
+                continue;
+            }
+        }
+        
+        sanitizedLines.push(line);
+    }
+    
+    return sanitizedLines.join('\n');
+}
+
 export function MindmapRenderer({ chart }: MindmapRendererProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const uniqueId = useId().replace(/:/g, '-');
@@ -21,6 +83,9 @@ export function MindmapRenderer({ chart }: MindmapRendererProps) {
 
         const renderChart = async () => {
             try {
+                // Sanitize the mermaid code before rendering
+                const sanitizedChart = sanitizeMermaidMindmap(chart);
+                
                 // Re-initialize mermaid on each render
                 mermaid.initialize({
                     startOnLoad: false,
@@ -40,7 +105,7 @@ export function MindmapRenderer({ chart }: MindmapRendererProps) {
                 // Generate unique ID for this render
                 const id = `mermaid-${uniqueId}-${Date.now()}`;
                 
-                const { svg } = await mermaid.render(id, chart);
+                const { svg } = await mermaid.render(id, sanitizedChart);
                 if (containerRef.current) {
                     containerRef.current.innerHTML = svg;
                 }

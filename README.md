@@ -7,6 +7,7 @@
   <img src="https://img.shields.io/badge/PostgreSQL-15-blue.svg" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/Docker-Compose-2496ED.svg" alt="Docker">
   <img src="https://img.shields.io/badge/🤗%20HuggingFace-Qwen2.5-yellow.svg" alt="HuggingFace">
+  <img src="https://img.shields.io/badge/🤗%20HuggingFace-Gemma2-orange.svg" alt="Gemma2">
   <img src="https://img.shields.io/badge/🎙️%20LiveKit-Voice%20AI-ff6b6b.svg" alt="LiveKit">
   <img src="https://img.shields.io/badge/📊%20Opik-Tracing%20%26%20Eval-orange.svg" alt="Opik">
 </p>
@@ -102,6 +103,8 @@ cd frontend && npm install && npm run dev
 - Generate MCQ questions on any topic
 - Customizable difficulty levels
 - Perfect for learning and assessment
+- **Local HuggingFace Option** - Uses Gemma 2 with 4-bit quantization for offline generation
+- Automatic fallback to API if local model unavailable
 
 ### 🧠 Learning Architect (NEW!)
 - **Mindmap Generation** - Visual Mermaid.js diagrams from document content
@@ -423,7 +426,8 @@ python app/project.py
 | `QDRANT_PORT` | ⚠️ For RAG | `6333` | Qdrant server port |
 | `QDRANT_COLLECTION` | No | `documents` | Qdrant collection name |
 | `HF_MODEL_ID` | No | `Qwen/Qwen2.5-7B-Instruct` | HuggingFace model for Learning Architect |
-| `HF_TOKEN` | No | - | HuggingFace token (for gated models) |
+| `HF_QUIZ_MODEL` | No | `google/gemma-2-2b-it` | HuggingFace model for Quiz Generator |
+| `HF_TOKEN` | No | - | HuggingFace token (for gated models like Gemma) |
 | `LIVEKIT_URL` | ⚠️ For Voice | - | LiveKit server WebSocket URL |
 | `LIVEKIT_API_KEY` | ⚠️ For Voice | - | LiveKit API key |
 | `LIVEKIT_API_SECRET` | ⚠️ For Voice | - | LiveKit API secret |
@@ -510,6 +514,7 @@ You: What are the top LeetCode problems for dynamic programming?
 ```
 You: Generate 5 MCQ questions about Python decorators
 🎯 Supervisor routed to: examiner_agent
+🧠 Using local HuggingFace model for quiz generation...
 🤖 Assistant: 
    **Question 1:** What symbol is used to apply a decorator?
    A) #
@@ -518,6 +523,57 @@ You: Generate 5 MCQ questions about Python decorators
    D) &
    **Correct Answer: B**
    ...
+```
+
+#### Local HuggingFace Quiz Generator (Optional)
+
+For offline quiz generation, Darksied includes a **Gemma 2-based Quiz Engine** that runs locally with 4-bit quantization to save memory.
+
+**Setup:**
+```bash
+# Install HuggingFace dependencies
+pip install -r requirements-hf.txt
+
+# For Gemma 2 (gated model), accept license and set token:
+# 1. Visit https://huggingface.co/google/gemma-2-2b-it
+# 2. Accept the license agreement
+# 3. Get token from https://huggingface.co/settings/tokens
+export HF_TOKEN=your_token_here
+```
+
+**How it works:**
+- Model loads **once** at startup and reuses for all requests
+- Uses **4-bit quantization** via bitsandbytes (~75% memory savings)
+- Outputs **JSON-formatted quizzes** compatible with frontend Quiz Cards
+- **Automatic fallback** to Gemini API if local model fails
+
+**Programmatic Usage:**
+```python
+from app.quiz_engine import QuizGenerator, get_quiz_generator
+
+# Get singleton instance (loads model once)
+generator = get_quiz_generator()
+
+# Generate quiz from text
+quiz = generator.generate(
+    text="Machine learning is a subset of AI...",
+    num_questions=5,
+    format_for_frontend=True
+)
+
+print(quiz)
+# {
+#   "quiz_title": "Machine Learning Quiz",
+#   "cards": [
+#     {
+#       "question": "What is the primary goal of supervised learning?",
+#       "options": ["A) ...", "B) ...", "C) ...", "D) ..."],
+#       "answer": "B) Learn from labeled data",
+#       "explanation": "...",
+#       "tts_text": "Question: What is the primary goal..."
+#     }
+#   ]
+# }
 ```
 
 ### Document Upload (RAG)
@@ -1095,16 +1151,57 @@ User Speech → LiveKit → Voice Avatar Agent (Socratic Tutor)
 
 **Purpose:** Educational content generation
 
+**Model Options:**
+1. **Local HuggingFace (Gemma 2)** - Runs offline with 4-bit quantization
+2. **Gemini API Fallback** - Uses Google's API if local model unavailable
+
+**Workflow:**
+```
+User Request ("Generate quiz about X")
+      │
+      ▼
+┌─────────────────┐
+│ Check HF Model  │ (Is Gemma 2 loaded?)
+└────────┬────────┘
+         │
+    ┌────┴────┐
+    │         │
+    ▼         ▼
+┌────────┐ ┌────────┐
+│ LOCAL  │ │  API   │
+│ Gemma2 │ │ Gemini │
+│  (HF)  │ │Fallback│
+└────┬───┘ └────┬───┘
+     │          │
+     └────┬─────┘
+          ▼
+   ┌───────────────┐
+   │  Quiz Output  │
+   │ (JSON Format) │
+   └───────────────┘
+```
+
 **Capabilities:**
 - Generate MCQ questions
 - Create quizzes on any topic
 - Vary difficulty levels
 - Provide correct answers
+- **Local inference** with 4-bit quantization (saves ~75% memory)
+- **RAG integration** - Can generate quizzes from uploaded documents
 
 **Example Queries:**
 - "Create a quiz about machine learning"
 - "Generate 10 hard questions about databases"
 - "Make practice problems for Python OOP"
+
+**Setup Local HuggingFace Quiz Engine (Optional):**
+```bash
+# Install HuggingFace dependencies
+pip install -r requirements-hf.txt
+
+# The system will automatically detect and use the local model
+# Look for: "✅ HuggingFace Quiz Generator loaded successfully"
+```
 
 ### 4. Chat Agent
 
@@ -1300,6 +1397,7 @@ Darksied/
 ├── app/                         # Application modules
 │   ├── project.py              # Alternative entry point
 │   ├── avatar_agent.py         # Voice Avatar agent (LiveKit)
+│   ├── quiz_engine.py          # 🆕 HuggingFace Quiz Generator (Gemma 2)
 │   ├── requirements.txt        # Python dependencies
 │   └── main.py                 # Minimal test runner
 │
@@ -1333,6 +1431,7 @@ Darksied/
 ├── init-db.sql                 # PostgreSQL initialization
 │
 ├── requirements-voice.txt      # Voice Avatar dependencies
+├── requirements-hf.txt         # 🆕 HuggingFace Quiz Engine dependencies
 ├── env.example                 # Environment variables template
 ├── Chatbot.ipynb               # Jupyter notebook for testing
 ├── README.md                   # This documentation
@@ -1345,6 +1444,7 @@ Darksied/
 |------|---------|
 | `api.py` | FastAPI backend server - handles all HTTP endpoints |
 | `project.py` | Core LangGraph multi-agent system with Opik tracing |
+| `app/quiz_engine.py` | HuggingFace Quiz Generator with Gemma 2 (4-bit quantized) |
 | `front/index.html` | FUI-style terminal interface (standalone HTML) |
 | `frontend/` | Full Next.js React application (alternative UI) |
 | `mcp tools/Rag.py` | Optional microservice for advanced RAG |
@@ -1666,6 +1766,30 @@ export HF_TOKEN=your_huggingface_token
 # Check logs for: "⚠️ Could not load HuggingFace model... Falling back to Gemini"
 ```
 
+#### 6b. "HuggingFace Quiz Engine (Gemma 2) issues"
+```bash
+# Install HuggingFace dependencies
+pip install -r requirements-hf.txt
+
+# For Gemma 2 models (gated), you need HuggingFace token
+# 1. Create account at https://huggingface.co
+# 2. Accept Gemma license at https://huggingface.co/google/gemma-2-2b-it
+# 3. Get token from https://huggingface.co/settings/tokens
+export HF_TOKEN=your_huggingface_token
+
+# bitsandbytes issues on Windows (4-bit quantization)
+# bitsandbytes works best on Linux/WSL2. For Windows:
+# Option 1: Use WSL2
+# Option 2: Disable 4-bit quantization (uses more memory)
+
+# Check if Quiz Engine loaded successfully
+# Look for: "✅ HuggingFace Quiz Generator loaded successfully"
+# If not: "ℹ️ HuggingFace Quiz Engine not available (install requirements-hf.txt)"
+
+# Test the Quiz Engine directly
+python -c "from app.quiz_engine import get_quiz_generator; g = get_quiz_generator(); print('OK' if g else 'Failed')"
+```
+
 #### 7. "Learning Architect returns empty mindmap/quiz"
 - Ensure you've uploaded a document first
 - Check that Qdrant has indexed the document:
@@ -1821,6 +1945,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Tavily](https://tavily.com/) - Search API
 - [HuggingFace](https://huggingface.co/) - Open source ML models
 - [Qwen](https://huggingface.co/Qwen) - Qwen2.5-7B-Instruct model
+- [Google Gemma 2](https://huggingface.co/google/gemma-2-2b-it) - Gemma 2 for local quiz generation
 - [LiveKit](https://livekit.io/) - Real-time voice/video infrastructure
 - [Beyond Presence](https://beyondpresence.ai/) - AI avatar technology
 - [Opik (Comet)](https://www.comet.com/opik) - LLM tracing & evaluation

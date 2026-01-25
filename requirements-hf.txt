@@ -1,0 +1,29 @@
+# Hugging Face Dependencies for Local Quiz Generation
+# ==================================================
+# Install with: pip install -r requirements-hf.txt
+#
+# Note: For GPU support, install PyTorch with CUDA first:
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+#
+# For CPU-only (slower but works anywhere):
+#   pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# Core HuggingFace libraries
+transformers>=4.40.0
+accelerate>=0.30.0
+bitsandbytes>=0.43.0  # For 4-bit quantization (Linux/WSL recommended)
+
+# PyTorch - uncomment ONE of the following based on your system:
+# torch>=2.2.0  # Basic (will auto-detect CUDA if available)
+
+# Sentencepiece for Gemma tokenizer
+sentencepiece>=0.1.99
+
+# Optional: For better performance
+# safetensors>=0.4.0
+# optimum>=1.18.0  # For additional optimizations
+
+# Note on bitsandbytes:
+# - Works best on Linux or WSL2
+# - Windows native support is experimental
+# - For Windows without WSL, you may need to compile from source or use CPU mode

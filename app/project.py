@@ -59,6 +59,27 @@ from langchain_community.document_loaders import (
 load_dotenv()
 
 # =============================================================================
+# HUGGINGFACE QUIZ ENGINE (Optional - loads lazily)
+# =============================================================================
+
+# Try to import the local HuggingFace quiz generator
+HF_QUIZ_AVAILABLE = False
+hf_quiz_generator = None
+
+try:
+    from quiz_engine import get_quiz_generator, HF_AVAILABLE
+    if HF_AVAILABLE:
+        # Initialize globally so model loads once (lazy loading on first use)
+        hf_quiz_generator = get_quiz_generator()
+        if hf_quiz_generator and hf_quiz_generator.is_available():
+            HF_QUIZ_AVAILABLE = True
+            print("✅ HuggingFace Quiz Generator loaded successfully")
+        else:
+            print("⚠️ HuggingFace Quiz Generator failed to initialize")
+except ImportError:
+    print("ℹ️ HuggingFace Quiz Engine not available (install requirements-hf.txt for local quiz generation)")
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
@@ -435,10 +456,53 @@ Always cite your sources when providing information from searches.""")
 def examiner_agent_node(state: SupervisorState) -> dict:
     """
     Examiner Agent: Generates MCQ questions based on the topic.
+    
+    Uses HuggingFace local model if available, otherwise falls back to API.
     """
     messages = state["messages"]
     last_message = messages[-1].content if messages else "general knowledge"
+    session_id = state.get("session_id", "default")
     
+    # Try to use local HuggingFace model first
+    if HF_QUIZ_AVAILABLE and hf_quiz_generator:
+        try:
+            print("🧠 Using local HuggingFace model for quiz generation...")
+            
+            # Check if we have document context from RAG
+            context_text = last_message
+            try:
+                docs = query_documents(last_message, session_id, k=3)
+                if docs:
+                    context_parts = [doc.page_content for doc in docs]
+                    context_text = f"{last_message}\n\nContext:\n" + "\n\n".join(context_parts)
+            except Exception:
+                pass  # No docs, use just the message
+            
+            quiz_data = hf_quiz_generator.generate(
+                text=context_text,
+                num_questions=5,
+                format_for_frontend=True
+            )
+            
+            if quiz_data and quiz_data.get("cards"):
+                # Format as readable text for the chat
+                content = f"## {quiz_data.get('quiz_title', 'Quiz')}\n\n"
+                for i, card in enumerate(quiz_data["cards"], 1):
+                    content += f"**Question {i}:** {card['question']}\n"
+                    for opt in card.get("options", []):
+                        content += f"   {opt}\n"
+                    content += f"\n**Answer:** {card['answer']}\n"
+                    content += f"**Explanation:** {card['explanation']}\n\n---\n\n"
+                
+                return {
+                    "messages": [AIMessage(content=content)],
+                    "final_response": content,
+                    "quiz_data": quiz_data  # Include structured data for frontend
+                }
+        except Exception as e:
+            print(f"⚠️ HF quiz generation failed, falling back to API: {e}")
+    
+    # Fallback to API-based generation
     prompt = ChatPromptTemplate.from_template(
         """You are an Expert Examiner Agent.
         

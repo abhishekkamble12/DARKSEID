@@ -161,25 +161,43 @@ async def chat_endpoint(request: ChatRequest):
 @app.post("/api/upload")
 async def upload_file(
     file: UploadFile = File(...),
-    session_id: str = Form(...)
+    session_id: Optional[str] = Form(None)
 ):
     """
     Upload and index a document for RAG.
     Tries MCP RAG service first, falls back to local indexing.
     """
+    # Validate file
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided or filename is missing")
+    
+    # Generate session_id if not provided
+    if not session_id:
+        session_id = uuid.uuid4().hex[:12]
+        print(f"[INFO] Generated new session_id: {session_id}")
+    
     # Update session ID in chatbot
     chatbot = get_chatbot()
     chatbot.session_id = session_id
     
-    print(f"[INFO] Uploading file: {file.filename}")
+    print(f"[INFO] Uploading file: {file.filename} (Session: {session_id})")
     
     # Read file content once
-    file_content = await file.read()
+    try:
+        file_content = await file.read()
+        if not file_content:
+            raise HTTPException(status_code=400, detail="File is empty")
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to read file: {e}")
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
     
     # Try MCP RAG service first
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            files = {"file": (file.filename, file_content, file.content_type)}
+            files = {"file": (file.filename, file_content, file.content_type or "application/octet-stream")}
             params = {"session_id": session_id}
             
             response = await client.post(
@@ -199,6 +217,10 @@ async def upload_file(
                     "image_chunks": result.get("image_chunks", 0),
                     "message": result.get("message", "Document indexed successfully")
                 }
+            else:
+                print(f"[WARN] MCP RAG service returned {response.status_code}: {response.text}. Falling back to local indexing.")
+    except httpx.RequestError as mcp_error:
+        print(f"[WARN] MCP RAG service connection error: {mcp_error}. Falling back to local indexing.")
     except Exception as mcp_error:
         print(f"[WARN] MCP RAG service unavailable: {mcp_error}. Falling back to local indexing.")
     

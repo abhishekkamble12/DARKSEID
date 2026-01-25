@@ -235,16 +235,293 @@ def get_checkpointer():
 
 
 # =============================================================================
-# STATE DEFINITIONS
+# SHARED CONTEXT MANAGER - NEVER RUN OUT OF CONTEXT
+# =============================================================================
+
+class SharedContextManager:
+    """
+    Manages shared context across all agents with smart summarization.
+    Ensures context never runs out by:
+    1. Summarizing old conversations
+    2. Extracting key facts from documents
+    3. Maintaining rolling window of recent messages
+    4. Providing unified context to all agents
+    """
+    
+    # Class-level storage for session contexts
+    _sessions: dict = {}
+    
+    # Configuration
+    MAX_RECENT_MESSAGES = 10  # Keep last N messages in full
+    MAX_CONTEXT_TOKENS = 8000  # Approximate token limit for context
+    SUMMARY_THRESHOLD = 15  # Summarize when messages exceed this
+    
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        
+        # Initialize session storage if not exists
+        if session_id not in SharedContextManager._sessions:
+            SharedContextManager._sessions[session_id] = {
+                "document_summaries": {},  # {filename: summary}
+                "document_key_facts": [],  # List of key facts
+                "conversation_summary": "",  # Summary of older conversation
+                "recent_messages": [],  # Recent full messages
+                "uploaded_files": [],  # List of uploaded file names
+                "extracted_topics": [],  # Topics extracted from documents
+                "agent_insights": {},  # Insights from each agent
+                "total_messages_processed": 0,
+            }
+        
+        self._data = SharedContextManager._sessions[session_id]
+    
+    @property
+    def document_summaries(self) -> dict:
+        return self._data["document_summaries"]
+    
+    @property
+    def key_facts(self) -> List[str]:
+        return self._data["document_key_facts"]
+    
+    @property
+    def uploaded_files(self) -> List[str]:
+        return self._data["uploaded_files"]
+    
+    @property
+    def conversation_summary(self) -> str:
+        return self._data["conversation_summary"]
+    
+    @property
+    def topics(self) -> List[str]:
+        return self._data["extracted_topics"]
+    
+    def add_document(self, filename: str, summary: str, key_facts: List[str], topics: List[str] = None):
+        """Add a document's context to shared memory."""
+        self._data["document_summaries"][filename] = summary
+        self._data["document_key_facts"].extend(key_facts)
+        self._data["uploaded_files"].append(filename)
+        if topics:
+            self._data["extracted_topics"].extend(topics)
+        # Deduplicate
+        self._data["document_key_facts"] = list(set(self._data["document_key_facts"]))[:50]  # Keep top 50 facts
+        self._data["extracted_topics"] = list(set(self._data["extracted_topics"]))[:20]
+        print(f"📚 Context updated: {filename} added with {len(key_facts)} facts")
+    
+    def add_message(self, role: str, content: str):
+        """Add a message and manage context size."""
+        self._data["recent_messages"].append({"role": role, "content": content})
+        self._data["total_messages_processed"] += 1
+        
+        # Check if we need to summarize
+        if len(self._data["recent_messages"]) > self.SUMMARY_THRESHOLD:
+            self._summarize_old_messages()
+    
+    def add_agent_insight(self, agent_name: str, insight: str):
+        """Store insights from agent processing."""
+        if agent_name not in self._data["agent_insights"]:
+            self._data["agent_insights"][agent_name] = []
+        self._data["agent_insights"][agent_name].append(insight)
+        # Keep last 5 insights per agent
+        self._data["agent_insights"][agent_name] = self._data["agent_insights"][agent_name][-5:]
+    
+    def _summarize_old_messages(self):
+        """Summarize older messages to prevent context overflow."""
+        if len(self._data["recent_messages"]) <= self.MAX_RECENT_MESSAGES:
+            return
+        
+        # Messages to summarize
+        to_summarize = self._data["recent_messages"][:-self.MAX_RECENT_MESSAGES]
+        self._data["recent_messages"] = self._data["recent_messages"][-self.MAX_RECENT_MESSAGES:]
+        
+        # Create summary using LLM
+        try:
+            summary_prompt = f"""Summarize this conversation concisely, keeping key information:
+
+Previous Summary: {self._data['conversation_summary'][:500] if self._data['conversation_summary'] else 'None'}
+
+New Messages:
+{chr(10).join([f"{m['role']}: {m['content'][:200]}" for m in to_summarize])}
+
+Provide a brief summary (max 300 words) capturing:
+1. Main topics discussed
+2. Key questions asked
+3. Important answers given
+4. Any decisions or conclusions"""
+
+            response = llm.invoke([HumanMessage(content=summary_prompt)])
+            self._data["conversation_summary"] = response.content[:1000]
+            print(f"📝 Context summarized: {len(to_summarize)} messages compressed")
+        except Exception as e:
+            # Fallback: simple concatenation
+            self._data["conversation_summary"] += f"\n[Earlier: {len(to_summarize)} messages about various topics]"
+    
+    def get_unified_context(self, include_docs: bool = True, include_history: bool = True) -> str:
+        """
+        Get unified context string for any agent.
+        This is the KEY method - provides same context to all agents.
+        """
+        context_parts = []
+        
+        # Document context
+        if include_docs and self._data["uploaded_files"]:
+            context_parts.append("=== UPLOADED DOCUMENTS ===")
+            context_parts.append(f"Files: {', '.join(self._data['uploaded_files'])}")
+            
+            if self._data["document_summaries"]:
+                context_parts.append("\nDocument Summaries:")
+                for filename, summary in self._data["document_summaries"].items():
+                    context_parts.append(f"• {filename}: {summary[:300]}...")
+            
+            if self._data["document_key_facts"]:
+                context_parts.append(f"\nKey Facts ({len(self._data['document_key_facts'])} total):")
+                for fact in self._data["document_key_facts"][:10]:
+                    context_parts.append(f"• {fact}")
+            
+            if self._data["extracted_topics"]:
+                context_parts.append(f"\nTopics: {', '.join(self._data['extracted_topics'][:10])}")
+        
+        # Conversation history
+        if include_history:
+            if self._data["conversation_summary"]:
+                context_parts.append("\n=== CONVERSATION HISTORY ===")
+                context_parts.append(f"Summary: {self._data['conversation_summary'][:500]}")
+            
+            if self._data["recent_messages"]:
+                context_parts.append("\nRecent Exchange:")
+                for msg in self._data["recent_messages"][-5:]:
+                    context_parts.append(f"{msg['role'].upper()}: {msg['content'][:150]}...")
+        
+        # Agent insights
+        if self._data["agent_insights"]:
+            context_parts.append("\n=== AGENT INSIGHTS ===")
+            for agent, insights in self._data["agent_insights"].items():
+                if insights:
+                    context_parts.append(f"{agent}: {insights[-1][:100]}")
+        
+        return "\n".join(context_parts)
+    
+    def get_document_context_for_rag(self) -> str:
+        """Get document-specific context for RAG queries."""
+        if not self._data["uploaded_files"]:
+            return "No documents uploaded yet."
+        
+        parts = [f"Available documents: {', '.join(self._data['uploaded_files'])}"]
+        
+        for filename, summary in self._data["document_summaries"].items():
+            parts.append(f"\n{filename}:\n{summary}")
+        
+        if self._data["document_key_facts"]:
+            parts.append(f"\nKey Facts:\n" + "\n".join([f"• {f}" for f in self._data["document_key_facts"][:15]]))
+        
+        return "\n".join(parts)
+    
+    def has_documents(self) -> bool:
+        """Check if any documents are uploaded."""
+        return len(self._data["uploaded_files"]) > 0
+    
+    def clear(self):
+        """Clear all context for this session."""
+        SharedContextManager._sessions[self.session_id] = {
+            "document_summaries": {},
+            "document_key_facts": [],
+            "conversation_summary": "",
+            "recent_messages": [],
+            "uploaded_files": [],
+            "extracted_topics": [],
+            "agent_insights": {},
+            "total_messages_processed": 0,
+        }
+        self._data = SharedContextManager._sessions[self.session_id]
+
+
+def extract_document_context(file_path: str, session_id: str) -> dict:
+    """
+    Extract summary and key facts from a document for shared context.
+    Called after document indexing.
+    """
+    try:
+        # Load document
+        documents = load_document(file_path)
+        full_text = "\n".join([doc.page_content for doc in documents])[:8000]
+        filename = Path(file_path).name
+        
+        # Use LLM to extract summary and key facts
+        extraction_prompt = f"""Analyze this document and extract:
+
+DOCUMENT: {filename}
+CONTENT:
+{full_text}
+
+Provide your response in this exact JSON format:
+{{
+    "summary": "2-3 sentence summary of the document",
+    "key_facts": ["fact 1", "fact 2", "fact 3", "fact 4", "fact 5"],
+    "topics": ["topic1", "topic2", "topic3"],
+    "document_type": "type of document (e.g., research paper, manual, report)"
+}}"""
+
+        response = llm.invoke([HumanMessage(content=extraction_prompt)])
+        
+        # Parse JSON response
+        try:
+            # Extract JSON from response
+            json_match = re.search(r'\{[\s\S]*\}', response.content)
+            if json_match:
+                data = json.loads(json_match.group())
+            else:
+                data = {
+                    "summary": response.content[:300],
+                    "key_facts": [],
+                    "topics": [],
+                    "document_type": "unknown"
+                }
+        except json.JSONDecodeError:
+            data = {
+                "summary": response.content[:300],
+                "key_facts": [],
+                "topics": [],
+                "document_type": "unknown"
+            }
+        
+        # Update shared context
+        ctx_manager = SharedContextManager(session_id)
+        ctx_manager.add_document(
+            filename=filename,
+            summary=data.get("summary", ""),
+            key_facts=data.get("key_facts", []),
+            topics=data.get("topics", [])
+        )
+        
+        return {
+            "status": "success",
+            "filename": filename,
+            "summary": data.get("summary", ""),
+            "facts_extracted": len(data.get("key_facts", [])),
+            "topics": data.get("topics", [])
+        }
+        
+    except Exception as e:
+        print(f"⚠️ Context extraction failed: {e}")
+        return {"status": "error", "message": str(e)}
+
+
+# =============================================================================
+# STATE DEFINITIONS - ENHANCED WITH SHARED CONTEXT
 # =============================================================================
 
 class SupervisorState(TypedDict):
-    """State for the supervisor multi-agent system."""
+    """
+    Enhanced state for the supervisor multi-agent system.
+    Supports shared context and multi-agent task delegation.
+    """
     messages: Annotated[list[BaseMessage], add_messages]
-    next_agent: str  # Which agent should handle this query
+    next_agent: str  # Current agent to handle query
+    pending_agents: List[str]  # Additional agents to run after current
     final_response: str  # The final response to return
     uploaded_file_path: Optional[str]  # Path to uploaded file (if any)
     session_id: str  # Session ID for checkpointing
+    shared_context: str  # Unified context string for all agents
+    agent_results: dict  # Results from each agent {agent_name: result}
+    task_type: str  # Type of task: "single", "multi", "chain"
 
 
 # =============================================================================
@@ -450,15 +727,15 @@ LEARNING_ARCHITECT_SYSTEM_PROMPT = """You are the "Darksied Learning Architect."
 
 [PART 1: MINDMAP]
 Generate a Mermaid.js mindmap syntax that visualizes the hierarchy of the topic.
-Format:
+Format (ALWAYS use (("double parentheses and quotes")) for node labels):
 ```mermaid
 mindmap
-  root((Central Topic))
-    Subtopic 1
-      Detail A
-      Detail B
-    Subtopic 2
-      Detail C
+  root(("Central Topic"))
+    Subtopic 1(("Subtopic 1"))
+      Detail A(("Detail A"))
+      Detail B(("Detail B"))
+    Subtopic 2(("Subtopic 2"))
+      Detail C(("Detail C"))
 ```
 
 [PART 2: QUIZ CARDS]
@@ -487,84 +764,153 @@ Generate a JSON array of 5 quiz card objects:
 
 def supervisor_node(state: SupervisorState) -> dict:
     """
-    Supervisor Agent: Analyzes the user query and decides which agent should handle it.
+    Enhanced Supervisor Agent with multi-agent routing and shared context.
     
-    Routes to:
-    - research_agent: For web searches, LeetCode problems, DSA explanations
-    - examiner_agent: For generating quiz/MCQ questions (without document context)
-    - chat_agent: For general conversation, greetings, simple questions
-    - rag_agent: For questions about uploaded documents/PDFs
-    - learning_architect_agent: For generating mindmaps and quizzes FROM uploaded documents
+    Can route to:
+    - Single agent for simple queries
+    - Multiple agents for complex queries (e.g., RAG + Mindmap)
+    - Chain of agents for sequential processing
+    
+    All agents receive the same shared context.
     """
     messages = state["messages"]
     last_message = messages[-1].content if messages else ""
+    session_id = state.get("session_id", "default")
     has_uploaded_file = bool(state.get("uploaded_file_path"))
     
-    # Create supervisor prompt
+    # Load shared context manager
+    ctx_manager = SharedContextManager(session_id)
+    has_documents = ctx_manager.has_documents()
+    
+    # Add user message to context manager
+    ctx_manager.add_message("user", last_message)
+    
+    # Get unified context for all agents
+    shared_context = ctx_manager.get_unified_context()
+    
+    # Enhanced supervisor prompt with multi-agent support
     supervisor_prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a Supervisor Agent that routes user queries to specialized agents.
+        ("system", """You are an intelligent Supervisor Agent that routes queries to specialized agents.
+You can assign ONE or MULTIPLE agents based on query complexity.
 
-Available Agents:
-1. **research_agent** - Use for: web searches, finding LeetCode problems, DSA explanations, 
-   current events, weather, news, technical research, anything requiring internet search.
-   
-2. **examiner_agent** - Use for: generating quiz questions, MCQs, test questions, 
-   practice problems on general topics (NOT from documents).
-   
-3. **chat_agent** - Use for: general conversation, greetings, simple factual questions 
-   that don't need search, explanations from your knowledge, coding help, math.
+=== SHARED CONTEXT (Available to ALL agents) ===
+{shared_context}
 
-4. **rag_agent** - Use for: general questions about uploaded documents, PDFs, files.
-   Keywords: "document", "pdf", "file", "uploaded", "the paper", "summarize".
-   {file_context}
+=== AVAILABLE AGENTS ===
+1. **research_agent** - Web searches, LeetCode, DSA, current events, news, technical research
+2. **examiner_agent** - Quiz/MCQ generation on general topics
+3. **chat_agent** - General conversation, coding help, explanations, math
+4. **rag_agent** - Questions about uploaded documents, summarization, Q&A
+5. **learning_architect_agent** - Mindmaps and quiz cards FROM documents
 
-5. **learning_architect_agent** - Use for: generating EDUCATIONAL content FROM documents:
-   - Mindmaps from document content
-   - Quiz cards from document content  
-   - Study materials from uploaded files
-   - Learning aids based on documents
-   Keywords: "mindmap", "mind map", "quiz from document", "study material", 
-   "learning cards", "flashcards from pdf", "visualize the document", "help me learn",
-   "create quiz from", "generate mindmap from", "study guide".
-   {file_context}
+=== MULTI-AGENT ROUTING ===
+For complex queries, you can assign MULTIPLE agents separated by commas.
+Examples:
+- "Create a mindmap from the PDF and quiz me on it" → "rag_agent,learning_architect_agent"
+- "Summarize the document and search for related topics" → "rag_agent,research_agent"
+- "Help me understand this PDF" → "rag_agent" (single agent sufficient)
 
-Analyze the user's message and respond with ONLY the agent name (one of: research_agent, examiner_agent, chat_agent, rag_agent, learning_architect_agent).
-Do NOT include any other text, just the agent name."""),
+=== CURRENT STATE ===
+Documents uploaded: {has_documents}
+Files: {uploaded_files}
+
+=== INSTRUCTIONS ===
+Analyze the query and respond with agent name(s) ONLY.
+For multiple agents, separate with commas (no spaces).
+Single: "chat_agent"
+Multiple: "rag_agent,learning_architect_agent"
+"""),
         ("human", "{query}")
     ])
     
-    file_context = "Note: User HAS uploaded a file." if has_uploaded_file else "Note: No file uploaded yet."
+    # Build context for prompt
+    uploaded_files = ", ".join(ctx_manager.uploaded_files) if ctx_manager.uploaded_files else "None"
     
     chain = supervisor_prompt | llm
-    response = chain.invoke({"query": last_message, "file_context": file_context})
+    response = chain.invoke({
+        "query": last_message, 
+        "shared_context": shared_context[:2000] if shared_context else "No prior context.",
+        "has_documents": "Yes" if has_documents else "No",
+        "uploaded_files": uploaded_files
+    })
     
-    # Extract the agent name from response
+    # Parse response for single or multiple agents
     response_text = response.content
     if isinstance(response_text, list):
         response_text = str(response_text[0]) if response_text else "chat_agent"
     
-    # Clean and validate the response
-    selected_agent = response_text.strip().lower().replace(" ", "_")
+    response_text = response_text.strip().lower().replace(" ", "")
     
-    # Default to chat_agent if invalid
+    # Check for multi-agent routing
+    if "," in response_text:
+        agents = [a.strip() for a in response_text.split(",")]
+        agents = [a for a in agents if a in AGENT_LIST]  # Validate
+        
+        if len(agents) >= 2:
+            primary_agent = agents[0]
+            pending_agents = agents[1:]
+            print(f"🎯 Supervisor multi-route: {primary_agent} → then {pending_agents}")
+            
+            return {
+                "next_agent": primary_agent,
+                "pending_agents": pending_agents,
+                "shared_context": shared_context,
+                "task_type": "multi",
+                "agent_results": {}
+            }
+    
+    # Single agent routing
+    selected_agent = response_text.split(",")[0].strip()
     if selected_agent not in AGENT_LIST:
         selected_agent = CHAT_AGENT
     
     print(f"🎯 Supervisor routed to: {selected_agent}")
     
-    return {"next_agent": selected_agent}
+    # Add insight to context
+    ctx_manager.add_agent_insight("Supervisor", f"Routed '{last_message[:50]}...' to {selected_agent}")
+    
+    return {
+        "next_agent": selected_agent,
+        "pending_agents": [],
+        "shared_context": shared_context,
+        "task_type": "single",
+        "agent_results": {}
+    }
 
 
 def research_agent_node(state: SupervisorState) -> dict:
     """
     Research Agent: Handles web searches and research tasks using Tavily tools.
+    ENHANCED: Uses shared context for document-aware research.
     """
     messages = state["messages"]
+    session_id = state.get("session_id", "default")
+    shared_context = state.get("shared_context", "")
     
-    system_msg = SystemMessage(content="""You are a Research Agent with access to web search tools.
+    # Get context manager
+    ctx_manager = SharedContextManager(session_id)
+    
+    # Build context-aware system message
+    doc_context = ""
+    if ctx_manager.has_documents():
+        doc_context = f"""
+
+=== DOCUMENT CONTEXT ===
+The user has uploaded these documents: {', '.join(ctx_manager.uploaded_files)}
+Topics from documents: {', '.join(ctx_manager.topics[:5]) if ctx_manager.topics else 'Not extracted'}
+
+When searching, consider:
+- Information related to the uploaded documents
+- Topics that expand on document content
+- Research that could help understand the documents better"""
+
+    system_msg = SystemMessage(content=f"""You are a Research Agent with access to web search tools.
 Your job is to find accurate, up-to-date information for the user.
 Use the available tools to search the web when needed.
-Always cite your sources when providing information from searches.""")
+Always cite your sources when providing information from searches.
+{doc_context}
+
+If the user's query relates to uploaded documents, search for complementary information.""")
     
     response = llm_with_tools.invoke([system_msg] + list(messages))
     
@@ -593,56 +939,126 @@ Always cite your sources when providing information from searches.""")
     if isinstance(final_content, list):
         final_content = final_content[0].get("text", str(final_content)) if final_content else ""
     
+    # Share insights with context manager
+    ctx_manager.add_agent_insight("Research", f"Searched: {messages[-1].content[:50] if messages else 'unknown'}...")
+    ctx_manager.add_message("assistant", final_content[:300])
+    
+    # Store result for multi-agent workflows
+    agent_results = state.get("agent_results", {})
+    agent_results["research_agent"] = {"response": final_content}
+    
     return {
         "messages": [AIMessage(content=final_content)],
-        "final_response": final_content
+        "final_response": final_content,
+        "agent_results": agent_results
     }
 
 
 def examiner_agent_node(state: SupervisorState) -> dict:
     """
     Examiner Agent: Generates MCQ questions based on the topic.
+    ENHANCED: Can generate questions from uploaded document content.
     """
     messages = state["messages"]
     last_message = messages[-1].content if messages else "general knowledge"
+    session_id = state.get("session_id", "default")
+    shared_context = state.get("shared_context", "")
+    agent_results = state.get("agent_results", {})
     
+    # Get context manager
+    ctx_manager = SharedContextManager(session_id)
+    
+    # Build document context if available
+    doc_context = ""
+    if ctx_manager.has_documents():
+        doc_context = f"""
+=== DOCUMENT CONTEXT FOR QUIZ GENERATION ===
+Uploaded files: {', '.join(ctx_manager.uploaded_files)}
+
+Key facts to base questions on:
+{chr(10).join(['• ' + f for f in ctx_manager.key_facts[:10]])}
+
+Topics: {', '.join(ctx_manager.topics[:5]) if ctx_manager.topics else 'General'}
+
+If the user wants questions from documents, use these facts to create relevant MCQs.
+"""
+
+    # Check if RAG agent provided context
+    rag_context = ""
+    if "rag_agent" in agent_results:
+        rag_context = f"\n=== CONTEXT FROM RAG AGENT ===\n{agent_results['rag_agent'].get('response', '')[:1500]}"
+
     prompt = ChatPromptTemplate.from_template(
         """You are an Expert Examiner Agent.
         
 Based on the user's request, generate Multiple Choice Questions (MCQs).
+{doc_context}
+{rag_context}
 
 User Request: {query}
 
 Rules:
-1. Generate 5-10 relevant MCQ questions based on the topic mentioned.
+1. Generate 5-10 relevant MCQ questions based on the topic or document content.
 2. Each question should have 4 options (A, B, C, D).
 3. Mark the correct answer clearly.
 4. Vary the difficulty level.
 5. Format nicely with proper spacing.
+6. If document content is available, prioritize questions from that content.
 
 Generate the questions now:"""
     )
     
     chain = prompt | llm
-    response = chain.invoke({"query": last_message})
+    response = chain.invoke({
+        "query": last_message,
+        "doc_context": doc_context,
+        "rag_context": rag_context
+    })
     
     content = response.content
     if isinstance(content, list):
         content = content[0].get("text", str(content)) if content else ""
     
+    # Share insights
+    ctx_manager.add_agent_insight("Examiner", f"Generated MCQs on: {last_message[:50]}...")
+    ctx_manager.add_message("assistant", content[:300])
+    
+    # Store result
+    agent_results["examiner_agent"] = {"response": content}
+    
     return {
         "messages": [AIMessage(content=content)],
-        "final_response": content
+        "final_response": content,
+        "agent_results": agent_results
     }
 
 
 def chat_agent_node(state: SupervisorState) -> dict:
     """
     Chat Agent: Handles general conversation and simple queries.
+    ENHANCED: Uses shared context for document-aware conversations.
     """
     messages = state["messages"]
+    session_id = state.get("session_id", "default")
+    shared_context = state.get("shared_context", "")
     
-    system_msg = SystemMessage(content="""You are a friendly and helpful AI assistant.
+    # Get context manager for document awareness
+    ctx_manager = SharedContextManager(session_id)
+    
+    # Build context-aware system message
+    doc_awareness = ""
+    if ctx_manager.has_documents():
+        doc_awareness = f"""
+
+=== DOCUMENT CONTEXT ===
+You have access to these uploaded documents: {', '.join(ctx_manager.uploaded_files)}
+
+Key facts from documents:
+{chr(10).join(['• ' + f for f in ctx_manager.key_facts[:5]])}
+
+If the user asks about these documents, you can reference this information or suggest they use the RAG agent for detailed queries."""
+
+    system_msg = SystemMessage(content=f"""You are a friendly and helpful AI assistant named Darksied.
 You can help with:
 - General conversation and greetings
 - Answering questions from your knowledge
@@ -650,14 +1066,21 @@ You can help with:
 - Helping with coding problems
 - Math and logic problems
 - Creative writing
+{doc_awareness}
 
-Be conversational, helpful, and concise.""")
+=== CONVERSATION CONTEXT ===
+{ctx_manager.conversation_summary if ctx_manager.conversation_summary else "This is a new conversation."}
+
+Be conversational, helpful, and concise. Reference uploaded documents when relevant.""")
     
     response = llm.invoke([system_msg] + list(messages))
     
     content = response.content
     if isinstance(content, list):
         content = content[0].get("text", str(content)) if content else ""
+    
+    # Update context
+    ctx_manager.add_message("assistant", content)
     
     return {
         "messages": [AIMessage(content=content)],
@@ -709,17 +1132,30 @@ if track is not None and track != (lambda fn: fn):
 def rag_agent_node(state: SupervisorState) -> dict:
     """
     RAG Agent: Handles questions about uploaded documents using retrieval-augmented generation.
+    ENHANCED: Uses shared context and contributes insights for other agents.
     """
     messages = state["messages"]
     last_message = messages[-1].content if messages else ""
     session_id = state.get("session_id", "default")
+    shared_context = state.get("shared_context", "")
+    
+    # Get shared context manager
+    ctx_manager = SharedContextManager(session_id)
     
     # Search for relevant documents
     try:
         docs = query_documents(last_message, session_id, k=5)
         
         if not docs:
-            content = "I don't have any documents indexed for your session. Please upload a PDF or document first using the upload feature."
+            # Check if we have shared context with document info
+            if ctx_manager.has_documents():
+                content = f"""I found document context in our shared memory:
+
+{ctx_manager.get_document_context_for_rag()}
+
+However, I couldn't find specific chunks matching your query. Try rephrasing or ask a more general question about the documents."""
+            else:
+                content = "I don't have any documents indexed for your session. Please upload a PDF or document first using the upload feature."
         else:
             # Build context from retrieved documents
             context_parts = []
@@ -730,22 +1166,32 @@ def rag_agent_node(state: SupervisorState) -> dict:
             
             context = "\n\n".join(context_parts)
             
-            # Create RAG prompt
+            # Enhanced RAG prompt with shared context
             rag_prompt = ChatPromptTemplate.from_messages([
-                ("system", """You are a Document Q&A Agent. Answer questions based ONLY on the provided context.
-If the answer is not in the context, say "I couldn't find this information in the uploaded documents."
-Always cite which document the information comes from.
+                ("system", """You are a Document Q&A Agent with access to shared knowledge.
 
-Context from uploaded documents:
+=== SHARED CONTEXT (from other agents) ===
+{shared_context}
+
+=== RETRIEVED DOCUMENT CHUNKS ===
 {context}
 
-Sources: {sources}"""),
+=== SOURCES ===
+{sources}
+
+=== INSTRUCTIONS ===
+1. Answer based PRIMARILY on the retrieved document chunks
+2. Use shared context for additional understanding
+3. Always cite which document the information comes from
+4. If information isn't in the documents, say so clearly
+5. Provide comprehensive answers that could help other agents understand the content"""),
                 ("human", "{question}")
             ])
             
             chain = rag_prompt | llm
             response = chain.invoke({
                 "context": context,
+                "shared_context": shared_context[:1500] if shared_context else "No prior shared context.",
                 "sources": ", ".join(sources),
                 "question": last_message
             })
@@ -754,8 +1200,11 @@ Sources: {sources}"""),
             if isinstance(content, list):
                 content = content[0].get("text", str(content)) if content else ""
             
+            # Share insights with other agents via context manager
+            ctx_manager.add_agent_insight("RAG", f"Retrieved from {', '.join(sources)}: {content[:200]}...")
+            ctx_manager.add_message("assistant", content)
+            
             # === OPIK RAG EVALUATION ===
-            # Evaluate hallucination score for the RAG response (non-blocking)
             try:
                 rag_score = evaluate_rag(last_message, context, content)
                 if rag_score is not None:
@@ -766,26 +1215,64 @@ Sources: {sources}"""),
     except Exception as e:
         content = f"Error querying documents: {str(e)}. Please make sure documents are uploaded and Qdrant is running."
     
+    # Store result for multi-agent workflows
+    agent_results = state.get("agent_results", {})
+    agent_results["rag_agent"] = {"response": content, "sources": list(sources) if 'sources' in dir() else []}
+    
     return {
         "messages": [AIMessage(content=content)],
-        "final_response": content
+        "final_response": content,
+        "agent_results": agent_results
     }
 
 
 def learning_architect_agent_node(state: SupervisorState) -> dict:
     """
-    Learning Architect Agent: Generates educational content (Mindmaps + Quiz Cards) 
-    from uploaded documents using HuggingFace Qwen model.
+    Learning Architect Agent: Generates educational content (Mindmaps + Quiz Cards).
+    ENHANCED: Uses shared context from RAG agent and other sources.
     """
     messages = state["messages"]
     last_message = messages[-1].content if messages else ""
     session_id = state.get("session_id", "default")
+    shared_context = state.get("shared_context", "")
+    agent_results = state.get("agent_results", {})
+    
+    # Get shared context manager
+    ctx_manager = SharedContextManager(session_id)
     
     try:
-        # Retrieve relevant documents for context
-        docs = query_documents(last_message, session_id, k=8)  # Get more context for learning
+        # First, check if RAG agent already retrieved context (multi-agent workflow)
+        rag_context = ""
+        if "rag_agent" in agent_results:
+            rag_result = agent_results["rag_agent"]
+            rag_context = rag_result.get("response", "")
+            print(f"📚 Learning Architect using RAG context: {len(rag_context)} chars")
         
-        if not docs:
+        # Retrieve relevant documents for context
+        docs = query_documents(last_message, session_id, k=8)
+        
+        # Build context from multiple sources
+        context_parts = []
+        sources = set()
+        
+        # Add RAG agent insights if available
+        if rag_context:
+            context_parts.append(f"=== FROM RAG AGENT ===\n{rag_context[:2000]}")
+        
+        # Add shared context summaries
+        if ctx_manager.has_documents():
+            doc_context = ctx_manager.get_document_context_for_rag()
+            context_parts.append(f"=== DOCUMENT SUMMARIES ===\n{doc_context[:1500]}")
+            sources.update(ctx_manager.uploaded_files)
+        
+        # Add retrieved chunks
+        if docs:
+            chunk_text = "\n\n---\n\n".join([doc.page_content for doc in docs])
+            context_parts.append(f"=== RETRIEVED DOCUMENT CHUNKS ===\n{chunk_text}")
+            for doc in docs:
+                sources.add(doc.metadata.get("source_file", "Unknown"))
+        
+        if not context_parts:
             content = """📚 **Learning Architect Ready!**
 
 I need document context to generate educational materials. Please:
@@ -802,26 +1289,23 @@ Example commands:
                 "final_response": content
             }
         
-        # Build rich context from retrieved documents
-        context_parts = []
-        sources = set()
-        for doc in docs:
-            context_parts.append(doc.page_content)
-            sources.add(doc.metadata.get("source_file", "Unknown"))
+        context_text = "\n\n".join(context_parts)
         
-        context_text = "\n\n---\n\n".join(context_parts)
-        
-        # Create the educational content generation prompt
-        generation_prompt = f"""You are the Darksied Learning Architect. Transform the following document context into educational materials.
+        # Enhanced generation prompt with all context
+        generation_prompt = f"""You are the Darksied Learning Architect. Transform the provided context into educational materials.
 
-### CONTEXT FROM DOCUMENTS:
-{context_text}
+=== SHARED CONTEXT FROM ALL AGENTS ===
+{shared_context[:1000] if shared_context else 'No shared context.'}
 
-### USER REQUEST:
+=== COMBINED DOCUMENT CONTEXT ===
+{context_text[:6000]}
+
+=== USER REQUEST ===
 {last_message}
 
-### YOUR TASK:
-Generate BOTH a Mermaid.js mindmap AND a JSON quiz based on the context above.
+=== YOUR TASK ===
+Generate BOTH a Mermaid.js mindmap AND a JSON quiz based on ALL the context above.
+Use insights from the RAG agent and document summaries to create comprehensive materials.
 
 {LEARNING_ARCHITECT_SYSTEM_PROMPT}
 
@@ -831,7 +1315,6 @@ Now generate the educational content:"""
         learning_llm = get_or_init_learning_llm()
         
         if learning_llm is not None:
-            # Use HuggingFace Qwen model
             try:
                 response = learning_llm.invoke(generation_prompt)
                 content = response if isinstance(response, str) else str(response)
@@ -839,12 +1322,15 @@ Now generate the educational content:"""
                 print(f"⚠️ HuggingFace model error: {hf_error}, falling back to Gemini")
                 content = _generate_with_gemini_fallback(context_text, last_message, sources)
         else:
-            # Fallback to Gemini
             content = _generate_with_gemini_fallback(context_text, last_message, sources)
         
         # Add source attribution
-        source_list = ", ".join(sources)
+        source_list = ", ".join(sources) if sources else "shared context"
         content = f"📚 **Learning Materials Generated from: {source_list}**\n\n{content}"
+        
+        # Share insights with context manager
+        ctx_manager.add_agent_insight("LearningArchitect", f"Generated mindmap/quiz from {len(sources)} sources")
+        ctx_manager.add_message("assistant", content[:500])
         
     except Exception as e:
         content = f"""❌ Error generating learning materials: {str(e)}
@@ -856,9 +1342,13 @@ Now generate the educational content:"""
 
 You can set `HF_TOKEN` environment variable if using gated models."""
 
+    # Store result for multi-agent workflows
+    agent_results["learning_architect_agent"] = {"response": content, "sources": list(sources) if sources else []}
+
     return {
         "messages": [AIMessage(content=content)],
-        "final_response": content
+        "final_response": content,
+        "agent_results": agent_results
     }
 
 
@@ -894,6 +1384,113 @@ Generate a comprehensive Mermaid mindmap first, then a 5-card JSON quiz.""")
     return content
 
 
+def sanitize_mermaid_mindmap(mermaid_code: str) -> str:
+    """
+    Sanitize Mermaid mindmap code to fix parsing errors.
+    1. Replaces nested parentheses in node labels with brackets.
+    2. Ensures labels are quoted if they contain special characters.
+    3. Handles flowchart/graph diagrams if mistakenly returned as mindmap.
+    """
+    if not mermaid_code:
+        return mermaid_code
+    
+    # Trim and find the first line
+    lines = mermaid_code.strip().split('\n')
+    if not lines:
+        return mermaid_code
+        
+    diagram_type = "mindmap"
+    if "graph" in lines[0] or "flowchart" in lines[0]:
+        diagram_type = "flowchart"
+    
+    sanitized_lines = []
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Skip empty lines
+        if not stripped:
+            continue
+            
+        # Keep diagram declaration
+        if stripped in ['mindmap', 'graph TD', 'graph LR', 'flowchart TD', 'flowchart LR'] or stripped.startswith(('graph ', 'flowchart ')):
+            sanitized_lines.append(line)
+            continue
+
+        if diagram_type == "mindmap":
+            # Extract indentation
+            indent_match = re.search(r'^(\s*)', line)
+            indent = indent_match.group(1) if indent_match else ""
+            
+            # Check if it has a label part with parentheses
+            if '(' in stripped:
+                name_part = stripped[:stripped.find('(')].strip()
+                label_part = stripped[stripped.find('('):].strip()
+                
+                # Sanitize the label part
+                # Remove outermost parens (could be ( ), (( )), etc.)
+                inner_label = label_part
+                p_count = 0
+                while inner_label.startswith('(') and inner_label.endswith(')'):
+                    inner_label = inner_label[1:-1]
+                    p_count += 1
+                
+                # Replace any remaining parens inside with brackets
+                inner_label = inner_label.replace('(', '[').replace(')', ']')
+                # Remove double quotes if already present to avoid triple quotes
+                inner_label = inner_label.replace('"', "'")
+                
+                # Reconstruct with quotes and double parens (safest for mindmap)
+                new_line = f'{indent}{name_part if name_part else ""} (("{inner_label}"))'
+                sanitized_lines.append(new_line)
+            else:
+                # No parens, just a label. Wrap in quotes and double parens.
+                # Extract indentation again to be safe
+                indent_match = re.search(r'^(\s*)', line)
+                indent = indent_match.group(1) if indent_match else ""
+                label = stripped.replace('"', "'")
+                sanitized_lines.append(f'{indent}(("{label}"))')
+        else:
+            # Flowchart/Graph sanitization - escape parentheses inside node labels
+            # Patterns: A[label], A(label), A{label}, A((label)), A>label], etc.
+            # We need to quote labels that contain parentheses
+            
+            def escape_flowchart_label(match):
+                """Escape parentheses inside flowchart node labels by quoting them."""
+                prefix = match.group(1)  # e.g., "A[" or "B("
+                content = match.group(2)  # label content
+                suffix = match.group(3)   # e.g., "]" or ")"
+                
+                # If content has unquoted parentheses, wrap in quotes
+                if '(' in content or ')' in content:
+                    # Remove existing quotes if any to avoid double-quoting
+                    content = content.strip('"').strip("'")
+                    return f'{prefix}"{content}"{suffix}'
+                return match.group(0)
+            
+            # Match node definitions with various shapes
+            # [text], (text), {text}, ((text)), >text], etc.
+            sanitized_line = re.sub(
+                r'(\w+\[)([^\]]+)(\])',  # Square brackets [text]
+                escape_flowchart_label,
+                line
+            )
+            sanitized_line = re.sub(
+                r'(\w+\()([^)]+)(\)(?!\)))',  # Single parentheses (text) not ((
+                escape_flowchart_label,
+                sanitized_line
+            )
+            sanitized_line = re.sub(
+                r'(\w+\{\{?)([^}]+)(\}?\})',  # Curly braces {text} or {{text}}
+                escape_flowchart_label,
+                sanitized_line
+            )
+            
+            sanitized_lines.append(sanitized_line)
+            
+    return '\n'.join(sanitized_lines)
+
+
 def parse_learning_output(raw_output: str) -> dict:
     """
     Parse the Learning Architect output to extract mindmap and quiz separately.
@@ -911,7 +1508,9 @@ def parse_learning_output(raw_output: str) -> dict:
     mermaid_pattern = r'```mermaid\s*([\s\S]*?)```'
     mermaid_match = re.search(mermaid_pattern, raw_output)
     if mermaid_match:
-        result["mindmap"] = mermaid_match.group(1).strip()
+        mindmap_code = mermaid_match.group(1).strip()
+        # Sanitize the mindmap code to fix parsing errors
+        result["mindmap"] = sanitize_mermaid_mindmap(mindmap_code)
     
     # Extract JSON quiz
     json_pattern = r'```json\s*([\s\S]*?)```'
@@ -945,8 +1544,43 @@ def route_to_agent(state: SupervisorState) -> Literal["research_agent", "examine
 # BUILD THE GRAPH
 # =============================================================================
 
+def multi_agent_router(state: SupervisorState) -> str:
+    """
+    Routes to the next pending agent or ends the workflow.
+    Enables multi-agent task delegation.
+    """
+    pending = state.get("pending_agents", [])
+    
+    if pending and len(pending) > 0:
+        next_agent = pending[0]
+        print(f"🔄 Multi-agent chain: routing to {next_agent}")
+        return next_agent
+    
+    return END
+
+
+def process_pending_agents(state: SupervisorState) -> dict:
+    """Process and update pending agents list."""
+    pending = state.get("pending_agents", [])
+    
+    if pending and len(pending) > 0:
+        # Remove the first pending agent (it will be executed next)
+        new_pending = pending[1:] if len(pending) > 1 else []
+        next_agent = pending[0]
+        
+        return {
+            "next_agent": next_agent,
+            "pending_agents": new_pending,
+        }
+    
+    return {"pending_agents": []}
+
+
 def create_supervisor_graph(checkpointer=None):
-    """Creates and compiles the supervisor multi-agent graph."""
+    """
+    Creates and compiles the supervisor multi-agent graph.
+    ENHANCED: Supports multi-agent task delegation and shared context.
+    """
     
     workflow = StateGraph(SupervisorState)
     
@@ -957,6 +1591,7 @@ def create_supervisor_graph(checkpointer=None):
     workflow.add_node(CHAT_AGENT, chat_agent_node)
     workflow.add_node(RAG_AGENT, rag_agent_node)
     workflow.add_node(LEARNING_ARCHITECT_AGENT, learning_architect_agent_node)
+    workflow.add_node("multi_agent_handler", process_pending_agents)
     
     # Add edges
     workflow.add_edge(START, "supervisor")
@@ -974,12 +1609,20 @@ def create_supervisor_graph(checkpointer=None):
         }
     )
     
-    # All agents end after processing
-    workflow.add_edge(RESEARCH_AGENT, END)
-    workflow.add_edge(EXAMINER_AGENT, END)
-    workflow.add_edge(CHAT_AGENT, END)
-    workflow.add_edge(RAG_AGENT, END)
-    workflow.add_edge(LEARNING_ARCHITECT_AGENT, END)
+    # Multi-agent chain: after each agent, check for pending agents
+    for agent in AGENT_LIST:
+        workflow.add_conditional_edges(
+            agent,
+            multi_agent_router,
+            {
+                RESEARCH_AGENT: RESEARCH_AGENT,
+                EXAMINER_AGENT: EXAMINER_AGENT,
+                CHAT_AGENT: CHAT_AGENT,
+                RAG_AGENT: RAG_AGENT,
+                LEARNING_ARCHITECT_AGENT: LEARNING_ARCHITECT_AGENT,
+                END: END,
+            }
+        )
     
     # Compile with checkpointer if provided
     if checkpointer:
@@ -1029,25 +1672,55 @@ class SupervisorChatbot:
     def upload_document(self, file_path: str) -> dict:
         """
         Upload and index a document for RAG.
+        ENHANCED: Also extracts context for shared memory across all agents.
         
         Args:
             file_path: Path to the document file
             
         Returns:
-            dict with status and chunk count
+            dict with status, chunk count, and context extraction results
         """
         try:
+            # Step 1: Index for vector search (RAG)
             result = index_document(file_path, self.session_id)
             print(f"📄 Indexed document: {result['file_name']} ({result['chunks_indexed']} chunks)")
+            
+            # Step 2: Extract context for shared memory (ALL agents can use this)
+            try:
+                context_result = extract_document_context(file_path, self.session_id)
+                if context_result.get("status") == "success":
+                    print(f"🧠 Context extracted: {context_result.get('facts_extracted', 0)} facts, topics: {context_result.get('topics', [])}")
+                    result["context_extracted"] = True
+                    result["summary"] = context_result.get("summary", "")
+                    result["topics"] = context_result.get("topics", [])
+                    
+                    # Notify about shared context availability
+                    print(f"✅ Document context now available to ALL agents (Voice, Mindmap, RAG, Chat)")
+            except Exception as ctx_err:
+                print(f"⚠️ Context extraction partial: {ctx_err}")
+                result["context_extracted"] = False
+            
             return result
         except Exception as e:
             error_msg = f"Error indexing document: {str(e)}"
             print(f"❌ {error_msg}")
             return {"status": "error", "message": error_msg}
     
+    def get_shared_context(self) -> str:
+        """Get the current shared context for this session."""
+        ctx_manager = SharedContextManager(self.session_id)
+        return ctx_manager.get_unified_context()
+    
+    def clear_context(self):
+        """Clear all shared context for this session."""
+        ctx_manager = SharedContextManager(self.session_id)
+        ctx_manager.clear()
+        print("🧹 Shared context cleared.")
+    
     def chat(self, user_input: str, uploaded_file_path: str = None) -> str:
         """
         Process a user message and return the response.
+        ENHANCED: Uses shared context and supports multi-agent workflows.
         
         Args:
             user_input: The user's message
@@ -1060,6 +1733,10 @@ class SupervisorChatbot:
         if uploaded_file_path:
             self.upload_document(uploaded_file_path)
         
+        # Get current shared context
+        ctx_manager = SharedContextManager(self.session_id)
+        shared_context = ctx_manager.get_unified_context()
+        
         # Build config with thread_id for checkpointing
         config = {"configurable": {"thread_id": self.session_id}}
         
@@ -1071,9 +1748,13 @@ class SupervisorChatbot:
             {
                 "messages": [HumanMessage(content=user_input)],
                 "next_agent": "",
+                "pending_agents": [],
                 "final_response": "",
                 "uploaded_file_path": uploaded_file_path,
                 "session_id": self.session_id,
+                "shared_context": shared_context,
+                "agent_results": {},
+                "task_type": "single",
             },
             config=config
         )
